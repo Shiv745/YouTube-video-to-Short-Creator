@@ -1,0 +1,7 @@
+customtkinter==5.2.2
+yt-dlp>=2024.10.22
+openai-whisper>=20231117
+google-genai>=0.3.0
+opencv-python>=4.10.0.84
+numpy>=1.26.4
+Pillow>=10.4.0
