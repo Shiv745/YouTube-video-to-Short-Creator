@@ -7,11 +7,12 @@ import threading
 import tempfile
 import time
 from tkinter import filedialog
+from urllib.parse import urlparse
 import customtkinter as ctk
 
 from core.cancellation import PipelineCancelledError
 from core.audio_downloader import AudioDownloader, is_supported_audio_url
-from core.audio_mixer import create_audio_preview
+from core.audio_mixer import create_audio_preview, mix_audio_into_video
 from core.downloader import VideoDownloader
 from core.transcriber import AudioTranscriber
 from core.clip_finder import (
@@ -50,6 +51,7 @@ class ShivStudioApp(ctk.CTk):
         self._closing_requested = False
         self._audio_preview_cancel_event = None
         self._audio_preview_process = None
+        self._audio_studio_cancel_event = None
         self.output_dir = os.path.abspath("output_4k_shorts")
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -57,11 +59,15 @@ class ShivStudioApp(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self._close_app)
 
     def _build_layout(self):
-        self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(0, weight=1)
+        self.tabs = ctk.CTkTabview(self, fg_color="#0B0F19")
+        self.tabs.pack(fill="both", expand=True, padx=12, pady=12)
+        self.ai_tab = self.tabs.add("AI Shorts")
+        self.audio_studio_tab = self.tabs.add("Audio Studio")
+        self.ai_tab.grid_columnconfigure(1, weight=1)
+        self.ai_tab.grid_rowconfigure(0, weight=1)
 
         # LEFT SIDEBAR NAVIGATION & SETTINGS
-        self.sidebar = ctk.CTkFrame(self, width=300, corner_radius=0, fg_color="#111827")
+        self.sidebar = ctk.CTkFrame(self.ai_tab, width=300, corner_radius=0, fg_color="#111827")
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         self.sidebar.grid_propagate(False)
         self.settings_panel = ctk.CTkScrollableFrame(
@@ -138,10 +144,28 @@ class ShivStudioApp(ctk.CTk):
         # Resolution Selector
         ctk.CTkLabel(self.settings_panel, text="Export Resolution:", font=("Inter", 12), text_color="#D1D5DB", anchor="w").pack(fill="x", padx=22)
         self.res_menu = ctk.CTkOptionMenu(
-            self.settings_panel, values=["4K UHD (2160x3840)", "1080p Full HD (1080x1920)"],
+            self.settings_panel, values=["4K UHD", "1080p Full HD"],
             height=36, fg_color="#1F2937", button_color="#2563EB", button_hover_color="#1D4ED8"
         )
         self.res_menu.pack(fill="x", padx=22, pady=(4, 12))
+
+        ctk.CTkLabel(
+            self.settings_panel,
+            text="Export Orientation:",
+            font=("Inter", 12),
+            text_color="#D1D5DB",
+            anchor="w",
+        ).pack(fill="x", padx=22)
+        self.orientation_menu = ctk.CTkOptionMenu(
+            self.settings_panel,
+            values=["Portrait (9:16)", "Landscape (16:9)"],
+            height=36,
+            fg_color="#1F2937",
+            button_color="#2563EB",
+            button_hover_color="#1D4ED8",
+        )
+        self.orientation_menu.set("Portrait (9:16)")
+        self.orientation_menu.pack(fill="x", padx=22, pady=(4, 12))
 
         ctk.CTkLabel(
             self.settings_panel,
@@ -300,10 +324,11 @@ class ShivStudioApp(ctk.CTk):
         # Framing Mode
         ctk.CTkLabel(self.settings_panel, text="Smart Vertical Framing:", font=("Inter", 12), text_color="#D1D5DB", anchor="w").pack(fill="x", padx=22)
         self.layout_menu = ctk.CTkOptionMenu(
-            self.settings_panel, values=["Smart Face Crop (Full 9:16)", "Blurred Cinema Canvas (9:16)"],
+            self.settings_panel,
+            values=["Smart Face Crop (fills frame)", "Blurred Cinema Canvas (fit frame)"],
             height=36, fg_color="#1F2937", button_color="#2563EB", button_hover_color="#1D4ED8"
         )
-        self.layout_menu.set("Blurred Cinema Canvas (9:16)")
+        self.layout_menu.set("Blurred Cinema Canvas (fit frame)")
         self.layout_menu.pack(fill="x", padx=22, pady=(4, 12))
 
         # Caption Theme
@@ -347,7 +372,7 @@ class ShivStudioApp(ctk.CTk):
         self.open_folder_btn.pack(fill="x", padx=22, pady=(10, 20), side="bottom")
 
         # MAIN WORKSPACE AREA
-        self.main_area = ctk.CTkFrame(self, fg_color="#0B0F19", corner_radius=0)
+        self.main_area = ctk.CTkFrame(self.ai_tab, fg_color="#0B0F19", corner_radius=0)
         self.main_area.grid(row=0, column=1, sticky="nsew", padx=28, pady=24)
         self.main_area.grid_columnconfigure(0, weight=1)
         self.main_area.grid_rowconfigure(3, weight=1)
@@ -492,18 +517,357 @@ class ShivStudioApp(ctk.CTk):
         self.log_box.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 14))
         self.log("Shiv.Studio 4K Engine Initialized.")
         self.log(f"Output Directory: {self.output_dir}")
+        self._build_audio_studio_tab()
+
+    def _build_audio_studio_tab(self):
+        tab = self.audio_studio_tab
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(3, weight=1)
+        ctk.CTkLabel(
+            tab,
+            text="Audio Studio",
+            font=("Inter", 28, "bold"),
+            text_color="#F9FAFB",
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=28, pady=(28, 4))
+        ctk.CTkLabel(
+            tab,
+            text=(
+                "Mix audio into a full-length video independently of AI clip generation. "
+                "No Gemini API key is needed."
+            ),
+            font=("Inter", 13),
+            text_color="#9CA3AF",
+            anchor="w",
+            wraplength=900,
+        ).grid(row=1, column=0, sticky="ew", padx=28, pady=(0, 20))
+
+        card = ctk.CTkFrame(
+            tab,
+            fg_color="#111827",
+            corner_radius=16,
+            border_width=1,
+            border_color="#1F2937",
+        )
+        card.grid(row=2, column=0, sticky="new", padx=28, pady=(0, 16))
+        card.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            card, text="VIDEO (local file or YouTube link)",
+            font=("Inter", 12), text_color="#D1D5DB", anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=20, pady=(18, 4))
+        video_row = ctk.CTkFrame(card, fg_color="transparent")
+        video_row.grid(row=1, column=0, sticky="ew", padx=20)
+        video_row.grid_columnconfigure(0, weight=1)
+        self.audio_studio_video_entry = ctk.CTkEntry(
+            video_row,
+            placeholder_text="Select a video file or paste a YouTube video link",
+            height=38,
+            fg_color="#0B0F19",
+            border_color="#374151",
+        )
+        self.audio_studio_video_entry.grid(row=0, column=0, sticky="ew")
+        ctk.CTkButton(
+            video_row, text="Browse", width=82, height=38,
+            fg_color="#1F2937", hover_color="#374151",
+            command=self.select_audio_studio_video,
+        ).grid(row=0, column=1, padx=(8, 0))
+
+        ctk.CTkLabel(
+            card, text="BACKGROUND AUDIO (optional)",
+            font=("Inter", 12), text_color="#D1D5DB", anchor="w",
+        ).grid(row=2, column=0, sticky="ew", padx=20, pady=(14, 4))
+        audio_row = ctk.CTkFrame(card, fg_color="transparent")
+        audio_row.grid(row=3, column=0, sticky="ew", padx=20)
+        audio_row.grid_columnconfigure(0, weight=1)
+        self.audio_studio_audio_entry = ctk.CTkEntry(
+            audio_row,
+            placeholder_text="Local audio file or supported YouTube/Instagram link",
+            height=38,
+            fg_color="#0B0F19",
+            border_color="#374151",
+        )
+        self.audio_studio_audio_entry.grid(row=0, column=0, sticky="ew")
+        ctk.CTkButton(
+            audio_row, text="Browse", width=82, height=38,
+            fg_color="#1F2937", hover_color="#374151",
+            command=self.select_audio_studio_audio,
+        ).grid(row=0, column=1, padx=(8, 0))
+
+        sliders = ctk.CTkFrame(card, fg_color="transparent")
+        sliders.grid(row=4, column=0, sticky="ew", padx=20, pady=(12, 4))
+        sliders.grid_columnconfigure((0, 1), weight=1)
+        self.audio_studio_source_lbl = ctk.CTkLabel(
+            sliders, text="Original audio volume: 100%",
+            font=("Inter", 11), text_color="#D1D5DB", anchor="w",
+        )
+        self.audio_studio_source_lbl.grid(row=0, column=0, sticky="ew", padx=(0, 14))
+        self.audio_studio_music_lbl = ctk.CTkLabel(
+            sliders, text="Background audio volume: 25%",
+            font=("Inter", 11), text_color="#D1D5DB", anchor="w",
+        )
+        self.audio_studio_music_lbl.grid(row=0, column=1, sticky="ew", padx=(14, 0))
+        self.audio_studio_source_slider = ctk.CTkSlider(
+            sliders, from_=0, to=200, number_of_steps=40,
+            command=self._update_audio_studio_volume_labels,
+        )
+        self.audio_studio_source_slider.set(100)
+        self.audio_studio_source_slider.grid(row=1, column=0, sticky="ew", padx=(0, 14), pady=(4, 8))
+        self.audio_studio_music_slider = ctk.CTkSlider(
+            sliders, from_=0, to=200, number_of_steps=40,
+            command=self._update_audio_studio_volume_labels,
+        )
+        self.audio_studio_music_slider.set(25)
+        self.audio_studio_music_slider.grid(row=1, column=1, sticky="ew", padx=(14, 0), pady=(4, 8))
+
+        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions.grid(row=5, column=0, sticky="ew", padx=20, pady=(6, 12))
+        self.audio_studio_preview_btn = ctk.CTkButton(
+            actions,
+            text="▶ Preview Mix",
+            height=38,
+            fg_color="#2563EB",
+            hover_color="#1D4ED8",
+            command=self.preview_audio_studio_mix,
+        )
+        self.audio_studio_preview_btn.pack(side="left", fill="x", expand=True)
+        self.audio_studio_stop_preview_btn = ctk.CTkButton(
+            actions,
+            text="■ Stop Preview",
+            width=112,
+            height=38,
+            fg_color="#7F1D1D",
+            hover_color="#991B1B",
+            state="disabled",
+            command=self.stop_audio_preview,
+        )
+        self.audio_studio_stop_preview_btn.pack(side="left", padx=(8, 0))
+        self.audio_studio_export_btn = ctk.CTkButton(
+            actions,
+            text="Export Full Video",
+            height=38,
+            fg_color="#059669",
+            hover_color="#047857",
+            command=self.export_audio_studio_video,
+        )
+        self.audio_studio_export_btn.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        self.audio_studio_cancel_btn = ctk.CTkButton(
+            actions,
+            text="Cancel Export",
+            width=112,
+            height=38,
+            fg_color="#7F1D1D",
+            hover_color="#991B1B",
+            state="disabled",
+            command=self.stop_audio_studio_export,
+        )
+        self.audio_studio_cancel_btn.pack(side="left", padx=(8, 0))
+
+        self.audio_studio_status_lbl = ctk.CTkLabel(
+            tab, text="Ready. Choose a video to preview or export.",
+            font=("Inter", 12), text_color="#38BDF8", anchor="w",
+        )
+        self.audio_studio_status_lbl.grid(row=3, column=0, sticky="new", padx=32, pady=(0, 8))
+        ctk.CTkLabel(
+            tab,
+            text="Online downloads are cached locally. Use only video and audio you have permission to use.",
+            font=("Inter", 11), text_color="#9CA3AF", anchor="w",
+        ).grid(row=4, column=0, sticky="new", padx=32, pady=(0, 16))
+
+    @staticmethod
+    def _is_supported_video_url(value: str) -> bool:
+        parsed = urlparse(value.strip())
+        host = (parsed.hostname or "").lower()
+        return (
+            parsed.scheme in {"http", "https"}
+            and any(host == domain or host.endswith(f".{domain}") for domain in ("youtube.com", "youtu.be"))
+        )
+
+    def select_audio_studio_video(self):
+        filepath = filedialog.askopenfilename(
+            title="Select Video",
+            filetypes=[("Video Files", "*.mp4 *.mov *.mkv *.webm *.avi"), ("All Files", "*.*")],
+        )
+        if filepath:
+            self.audio_studio_video_entry.delete(0, "end")
+            self.audio_studio_video_entry.insert(0, filepath)
+
+    def select_audio_studio_audio(self):
+        filepath = filedialog.askopenfilename(
+            title="Select Background Audio",
+            filetypes=[
+                ("Audio Files", "*.mp3 *.m4a *.aac *.wav *.flac *.ogg *.opus *.wma"),
+                ("All Files", "*.*"),
+            ],
+        )
+        if filepath:
+            self.audio_studio_audio_entry.delete(0, "end")
+            self.audio_studio_audio_entry.insert(0, filepath)
+
+    def _audio_studio_inputs(self):
+        video_source = self.audio_studio_video_entry.get().strip()
+        audio_source = self.audio_studio_audio_entry.get().strip()
+        if not video_source:
+            self.log("[!] Choose a local video or enter a YouTube video URL.")
+            return None
+        if not os.path.isfile(video_source) and not self._is_supported_video_url(video_source):
+            self.log("[!] Audio Studio video input must be a local file or a YouTube URL.")
+            return None
+        if audio_source and not os.path.isfile(audio_source) and not is_supported_audio_url(audio_source):
+            self.log("[!] Background audio must be a local file or a YouTube/Instagram URL.")
+            return None
+        return video_source, audio_source
+
+    def preview_audio_studio_mix(self):
+        if self._cancel_event or self._audio_studio_cancel_event:
+            self.log("[!] Wait for the current video operation to finish before previewing.")
+            return
+        if self._audio_preview_cancel_event:
+            self.log("[!] An audio preview is already running.")
+            return
+        inputs = self._audio_studio_inputs()
+        if not inputs:
+            return
+        video_source, audio_source = inputs
+        self._start_audio_preview(
+            video_source,
+            audio_source,
+            self.audio_studio_source_slider.get() / 100,
+            self.audio_studio_music_slider.get() / 100,
+            source_is_video=True,
+        )
+
+    def export_audio_studio_video(self):
+        if self._cancel_event or self._audio_preview_cancel_event or self._audio_studio_cancel_event:
+            self.log("[!] Wait for the current video operation to finish before exporting.")
+            return
+        inputs = self._audio_studio_inputs()
+        if not inputs:
+            return
+        output_path = filedialog.asksaveasfilename(
+            title="Export Full-Length Audio Mix",
+            initialdir=self.output_dir,
+            initialfile="audio_mixed_video.mp4",
+            defaultextension=".mp4",
+            filetypes=[("MP4 Video", "*.mp4")],
+        )
+        if not output_path:
+            return
+        video_source, audio_source = inputs
+        cookie_browser = self._selected_cookie_browser()
+        cancel_event = threading.Event()
+        self._audio_studio_cancel_event = cancel_event
+        self.audio_studio_export_btn.configure(state="disabled")
+        self.audio_studio_cancel_btn.configure(state="normal", text="Cancel Export")
+        self.audio_studio_status_lbl.configure(text="Preparing video and audio...")
+        threading.Thread(
+            target=self._audio_studio_export_worker,
+            args=(
+                video_source,
+                audio_source,
+                output_path,
+                cookie_browser,
+                self.audio_studio_source_slider.get() / 100,
+                self.audio_studio_music_slider.get() / 100,
+                cancel_event,
+            ),
+            daemon=True,
+        ).start()
+
+    def stop_audio_studio_export(self):
+        if self._audio_studio_cancel_event:
+            self._audio_studio_cancel_event.set()
+            self.audio_studio_cancel_btn.configure(state="disabled", text="Stopping...")
+
+    def _audio_studio_export_worker(
+        self,
+        video_source: str,
+        audio_source: str,
+        output_path: str,
+        cookie_browser: str,
+        source_volume: float,
+        music_volume: float,
+        cancel_event: threading.Event,
+    ):
+        try:
+            self._check_cancelled(cancel_event)
+            if os.path.isfile(video_source):
+                video_path = video_source
+            else:
+                self._set_audio_studio_status("Downloading source video...")
+                video_path = VideoDownloader.download_youtube_video(
+                    video_source,
+                    progress_callback=lambda message, _fraction: self.log(f" -> {message}"),
+                    cancel_event=cancel_event,
+                    cookie_browser=cookie_browser,
+                )["filepath"]
+            if audio_source:
+                if os.path.isfile(audio_source):
+                    background_audio_path = audio_source
+                else:
+                    self._set_audio_studio_status("Downloading background audio...")
+                    background_audio_path = AudioDownloader.download_audio(
+                        audio_source,
+                        progress_callback=lambda message, _fraction: self.log(f" -> {message}"),
+                        cancel_event=cancel_event,
+                        cookie_browser=cookie_browser,
+                    )
+                if get_audio_stream_index(background_audio_path) is None:
+                    raise ValueError("The selected background file contains no usable audio stream.")
+            else:
+                background_audio_path = None
+
+            self._check_cancelled(cancel_event)
+            self._set_audio_studio_status("Mixing audio and exporting the full-length video...")
+            mix_audio_into_video(
+                video_path,
+                background_audio_path,
+                output_path,
+                source_volume,
+                music_volume,
+                cancel_event=cancel_event,
+            )
+            self.log(f"[+] Audio Studio export saved: {output_path}")
+            self._set_audio_studio_status(f"Export complete: {output_path}")
+        except PipelineCancelledError:
+            self.log("Audio Studio export stopped.")
+            self._set_audio_studio_status("Export cancelled.")
+        except Exception as error:
+            self.log(f"[!] Audio Studio export failed: {type(error).__name__}: {error}")
+            self._set_audio_studio_status(f"Export failed: {error}")
+        finally:
+            self.after(0, lambda: self._finish_audio_studio_export(cancel_event))
+
+    def _set_audio_studio_status(self, text: str):
+        self.after(0, lambda: self.audio_studio_status_lbl.configure(text=text))
+
+    def _finish_audio_studio_export(self, cancel_event: threading.Event):
+        if self._audio_studio_cancel_event is cancel_event:
+            self._audio_studio_cancel_event = None
+        if self._closing_requested and not self._cancel_event and not self._audio_preview_cancel_event:
+            self.destroy()
+            return
+        self.audio_studio_export_btn.configure(state="normal")
+        self.audio_studio_cancel_btn.configure(state="disabled", text="Cancel Export")
+
+    def _selected_cookie_browser(self):
+        selected_browser = self.youtube_browser_menu.get()
+        return None if selected_browser == "None (public videos)" else selected_browser.lower()
 
     def _close_app(self):
+        self._closing_requested = True
         if self._audio_preview_cancel_event:
-            self._closing_requested = True
             self.stop_audio_preview()
-            return
+        if self._audio_studio_cancel_event:
+            self.stop_audio_studio_export()
         if self._cancel_event:
-            self._closing_requested = True
             self._cancel_event.set()
             self.stop_btn.configure(state="disabled", text="Stopping...")
             self.set_status("Stopping safely before closing...", None)
             self.log("[!] Closing requested; waiting for the current operation to stop.")
+            return
+        if self._audio_preview_cancel_event or self._audio_studio_cancel_event:
+            self.log("[!] Closing requested; waiting for the audio operation to stop.")
             return
         self.destroy()
 
@@ -672,7 +1036,7 @@ class ShivStudioApp(ctk.CTk):
             self.log(f"Selected background audio: {filepath}")
 
     def preview_audio_mix(self):
-        if self._cancel_event:
+        if self._cancel_event or self._audio_studio_cancel_event:
             self.log("[!] Stop the current video generation before previewing audio.")
             return
         if self._audio_preview_cancel_event:
@@ -694,24 +1058,38 @@ class ShivStudioApp(ctk.CTk):
             )
             return
 
-        selected_browser = self.youtube_browser_menu.get()
-        cookie_browser = (
-            None if selected_browser == "None (public videos)"
-            else selected_browser.lower()
+        self._start_audio_preview(
+            source_input,
+            audio_source,
+            self.source_audio_volume_slider.get() / 100,
+            self.background_audio_volume_slider.get() / 100,
         )
+
+    def _start_audio_preview(
+        self,
+        source_input: str,
+        audio_source: str,
+        source_volume: float,
+        music_volume: float,
+        source_is_video: bool = False,
+    ):
+        cookie_browser = self._selected_cookie_browser()
         cancel_event = threading.Event()
         self._audio_preview_cancel_event = cancel_event
         self.preview_audio_btn.configure(state="disabled", text="Preparing preview...")
+        self.audio_studio_preview_btn.configure(state="disabled", text="Preparing preview...")
         self.stop_audio_preview_btn.configure(state="normal")
+        self.audio_studio_stop_preview_btn.configure(state="normal")
         threading.Thread(
             target=self._audio_preview_worker,
             args=(
                 source_input,
                 audio_source,
                 cookie_browser,
-                self.source_audio_volume_slider.get() / 100,
-                self.background_audio_volume_slider.get() / 100,
+                source_volume,
+                music_volume,
                 cancel_event,
+                source_is_video,
             ),
             daemon=True,
         ).start()
@@ -724,6 +1102,7 @@ class ShivStudioApp(ctk.CTk):
         if process and process.poll() is None:
             process.terminate()
         self.stop_audio_preview_btn.configure(state="disabled", text="Stopping...")
+        self.audio_studio_stop_preview_btn.configure(state="disabled", text="Stopping...")
 
     def _audio_preview_worker(
         self,
@@ -733,13 +1112,14 @@ class ShivStudioApp(ctk.CTk):
         source_volume: float,
         music_volume: float,
         cancel_event: threading.Event,
+        source_is_video: bool = False,
     ):
         preview_path = None
         try:
             self._check_cancelled(cancel_event)
             if os.path.isfile(source_input):
                 source_audio_path = source_input
-            elif is_supported_audio_url(source_input):
+            elif is_supported_audio_url(source_input) and not source_is_video:
                 self.log("Preparing source audio for the preview...")
                 source_audio_path = AudioDownloader.download_audio(
                     source_input,
@@ -795,7 +1175,10 @@ class ShivStudioApp(ctk.CTk):
                 cancel_event=cancel_event,
             )
             self._check_cancelled(cancel_event)
-            self.log("Playing 15-second audio-mix preview. Use Stop to end playback.")
+            self.log(
+                f"Playing {preview_duration:.1f}-second audio-mix preview. "
+                "Use Stop to end playback."
+            )
             self._audio_preview_process = subprocess.Popen(
                 [
                     find_ffplay(),
@@ -845,11 +1228,13 @@ class ShivStudioApp(ctk.CTk):
     def _finish_audio_preview(self, cancel_event: threading.Event):
         if self._audio_preview_cancel_event is cancel_event:
             self._audio_preview_cancel_event = None
-        if self._closing_requested and not self._cancel_event:
+        if self._closing_requested and not self._cancel_event and not self._audio_studio_cancel_event:
             self.destroy()
             return
         self.preview_audio_btn.configure(state="normal", text="▶ Preview Mix")
         self.stop_audio_preview_btn.configure(state="disabled", text="■ Stop")
+        self.audio_studio_preview_btn.configure(state="normal", text="▶ Preview Mix")
+        self.audio_studio_stop_preview_btn.configure(state="disabled", text="■ Stop Preview")
 
     def _update_audio_volume_labels(self, _value=None):
         self.source_audio_volume_lbl.configure(
@@ -860,6 +1245,14 @@ class ShivStudioApp(ctk.CTk):
                 "Background audio volume: "
                 f"{int(self.background_audio_volume_slider.get())}%"
             )
+        )
+
+    def _update_audio_studio_volume_labels(self, _value=None):
+        self.audio_studio_source_lbl.configure(
+            text=f"Original audio volume: {int(self.audio_studio_source_slider.get())}%"
+        )
+        self.audio_studio_music_lbl.configure(
+            text=f"Background audio volume: {int(self.audio_studio_music_slider.get())}%"
         )
 
     def open_output_folder(self):
@@ -995,6 +1388,9 @@ class ShivStudioApp(ctk.CTk):
         self.log("[+] Copied recommendation to clipboard.")
 
     def start_pipeline(self):
+        if self._audio_studio_cancel_event:
+            self.log("[!] Wait for the Audio Studio export to finish before generating clips.")
+            return
         if self._audio_preview_cancel_event:
             self.log("[!] Stop the audio preview before generating clips.")
             return
@@ -1061,6 +1457,7 @@ class ShivStudioApp(ctk.CTk):
             "target_audience": self.audience_entry.get().strip(),
             "audience_timezone": self.audience_timezone_entry.get().strip(),
             "resolution": self.res_menu.get(),
+            "orientation": self.orientation_menu.get(),
             "layout": self.layout_menu.get(),
             "caption_style": self.caption_menu.get(),
             "burn_captions": bool(self.captions_enabled.get()),
@@ -1206,6 +1603,22 @@ class ShivStudioApp(ctk.CTk):
             )
         return "Ranked by virality score. Add transcript content for AI publishing recommendations."
 
+    @staticmethod
+    def _format_clip_ranking(clips: list) -> str:
+        ranked = sorted(
+            clips,
+            key=lambda clip: clip.get("publishing", {}).get("rank", len(clips) + 1),
+        )
+        lines = []
+        for index, clip in enumerate(ranked, 1):
+            score = clip.get("virality_score")
+            score_text = f"{score}/100" if score is not None else "Score unavailable"
+            lines.append(
+                f"#{clip.get('publishing', {}).get('rank', index)}  "
+                f"{score_text}  {clip.get('title', 'Untitled clip')}"
+            )
+        return "\n".join(lines)
+
     def _pipeline_worker(
         self,
         source_input: str,
@@ -1230,6 +1643,7 @@ class ShivStudioApp(ctk.CTk):
             audience_timezone = options["audience_timezone"]
             res_preset = options["resolution"]
             layout_mode = options["layout"]
+            orientation_mode = options["orientation"]
             caption_style = options["caption_style"]
             burn_captions = options["burn_captions"]
             whisper_model = options["whisper_model"]
@@ -1475,9 +1889,10 @@ class ShivStudioApp(ctk.CTk):
                     )
                 self.after(
                     0,
-                    lambda summary=comparison_summary: self.publishing_summary_lbl.configure(
+                    lambda summary=comparison_summary, ranking=self._format_clip_ranking(clips): self.publishing_summary_lbl.configure(
                         text=(
-                            f"🏆 CLIP RANKING & PUBLISHING PLAN\n{summary}\n"
+                            f"🏆 VIRAL POTENTIAL RANKING (highest potential first)\n"
+                            f"{ranking}\n\nPUBLISHING PLAN\n{summary}\n"
                             "Scores and upload times are estimates, not view guarantees. "
                             "Use your YouTube Analytics to validate timing."
                         ),
@@ -1598,6 +2013,7 @@ class ShivStudioApp(ctk.CTk):
                             ass_subtitle_file=ass_path,
                             layout_mode=layout_mode,
                             resolution_preset=res_preset,
+                            orientation_preset=orientation_mode,
                             max_duration_sec=max_duration,
                             background_audio=background_audio_path,
                             source_audio_volume=source_audio_volume,

@@ -83,8 +83,9 @@ class VideoEngine4K:
         start_sec: float,
         end_sec: float,
         ass_subtitle_file: str = None,
-        layout_mode: str = "Blurred Cinema Canvas (9:16)",
+        layout_mode: str = "Blurred Cinema Canvas (fit frame)",
         resolution_preset: str = "4K UHD (2160x3840)",
+        orientation_preset: str = "Portrait (9:16)",
         max_duration_sec: int = MAX_SHORT_DURATION_SECONDS,
         background_audio: str = None,
         source_audio_volume: float = 1.0,
@@ -100,7 +101,17 @@ class VideoEngine4K:
             float(max_duration_sec),
             max(1.0, end_sec - start_sec),
         )
-        target_w, target_h = (2160, 3840) if "4K" in resolution_preset else (1080, 1920)
+        if "4K" in resolution_preset:
+            target_w, target_h = (
+                (3840, 2160) if orientation_preset.startswith("Landscape")
+                else (2160, 3840)
+            )
+        else:
+            target_w, target_h = (
+                (1920, 1080) if orientation_preset.startswith("Landscape")
+                else (1080, 1920)
+            )
+        target_ratio = target_w / target_h
 
         center_ratio = cls.detect_smart_face_center_x(source_video, start_sec, duration)
         if cancel_event and cancel_event.is_set():
@@ -114,8 +125,7 @@ class VideoEngine4K:
             escaped_ass = ass_subtitle_file.replace("\\", "/").replace(":", "\\:")
             sub_filter = f",ass='{escaped_ass}'"
 
-        if layout_mode == "Blurred Cinema Canvas (9:16)":
-            # Creates a 4K vertical Gaussian-blurred background with crisp foreground centered + sharpening
+        if layout_mode.startswith("Blurred Cinema Canvas"):
             vf_complex = (
                 f"[0:v]scale={target_w}:{target_h}:force_original_aspect_ratio=increase,"
                 f"crop={target_w}:{target_h},boxblur=45:12,eq=brightness=-0.12:saturation=1.15[bg];"
@@ -125,10 +135,16 @@ class VideoEngine4K:
             )
             video_filter_args = ["-filter_complex", vf_complex]
         else:
-            # Smart Face Crop 9:16 + Lanczos 4K Upscaling + Unsharp Mask + Studio Color Grade
-            crop_x_expr = f"max(0,min(iw-ih*9/16,(iw*{center_ratio:.3f})-(ih*9/32)))"
+            crop_width = f"min(iw,ih*{target_ratio:.8f})"
+            crop_height = f"min(ih,iw/{target_ratio:.8f})"
+            crop_x_expr = (
+                f"max(0,min(iw-{crop_width},"
+                f"(iw*{center_ratio:.3f})-({crop_width}/2)))"
+            )
+            crop_y_expr = f"(ih-{crop_height})/2"
             vf_chain = (
-                f"crop=ih*9/16:ih:'{crop_x_expr}':0,"
+                f"crop=w='{crop_width}':h='{crop_height}':"
+                f"x='{crop_x_expr}':y='{crop_y_expr}',"
                 f"scale={target_w}:{target_h}:flags=lanczos,"
                 f"unsharp=5:5:0.85:3:3:0.4,"
                 f"eq=contrast=1.04:saturation=1.08"
