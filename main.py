@@ -6,11 +6,11 @@ if sys.stdout is None:
 if sys.stderr is None:
     sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
-from ui.studio_window import KixyStudioApp
+from ui.studio_window import ShivStudioApp
 
 
 def main():
-    app = KixyStudioApp()
+    app = ShivStudioApp()
     app.mainloop()
 
 if __name__ == "__main__":

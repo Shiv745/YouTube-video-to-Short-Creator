@@ -2,7 +2,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Run KixyStudio 4K App",
+            "name": "Run Shiv.Studio 4K App",
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/main.py",

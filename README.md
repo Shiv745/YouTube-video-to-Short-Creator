@@ -1,4 +1,4 @@
-# KixyStudio 4K — AI Viral Shorts & Reels Desktop Creator
+# Shiv.Studio 4K — AI Viral Shorts & Reels Desktop Creator
 
 A full-featured Python desktop application inspired by **kixy.ai** and **OpusClip** that downloads YouTube videos (or accepts local video clips), identifies the most viral moments using **Google Gemini AI**, tracks the speaker's face using **OpenCV**, burns in dynamic **Hormozi-style animated captions**, and exports crystal-clear **4K UHD (2160x3840) Vertical Shorts** ready for YouTube Shorts, Instagram Reels, and TikTok.
 
@@ -15,7 +15,7 @@ A full-featured Python desktop application inspired by **kixy.ai** and **OpusCli
 8. **Pipeline Cancellation:** Stop an active run from the main toolbar; downloads and FFmpeg renders stop promptly, while transcription and Gemini requests stop after the current operation finishes.
 9. **Persistent Source Downloads:** Completed YouTube downloads are saved in `downloaded_videos/` and reused on later runs for the same video, even when tracking query parameters or URL formats differ.
 10. **YouTube Sign-In:** The app defaults to public-video mode and does not read browser cookies. If YouTube requires verification, choose the browser where you are signed in from the sidebar; the app reads those cookies locally through yt-dlp.
-11. **Progress and Recovery:** Shows download/render percentages, completed and remaining clips, and time estimates where measurable. Transcription and AI analysis show an activity indicator because those libraries do not expose reliable progress. Temporary errors retry automatically with bounded attempts; Gemini uses its own retry policy. Sign-in, invalid credentials, and other non-retryable errors remain visible in telemetry.
+11. **Progress and Recovery:** Shows download/render percentages, completed and remaining clips, and time estimates where measurable. Transcription and AI analysis show an activity indicator because those libraries do not expose reliable progress. Temporary errors retry automatically with bounded attempts; if Gemini 3.8 Flash remains unavailable, the app tries Gemini 3.6 Flash. Sign-in, invalid credentials, and other non-retryable errors remain visible in telemetry.
 If yt-dlp reports that it cannot copy a browser cookie database, fully close that browser (including background processes) and retry, or select a different browser where you are signed in. The app does not retry this local browser-lock error because retrying cannot unlock the database.
 
 ---
@@ -29,7 +29,7 @@ Ensure **FFmpeg** is installed and added to your system PATH:
 - **Linux:** `sudo apt install ffmpeg`
 
 ### 2. Open in VS Code & Install Dependencies
-Open the `KixyStudio_4K_AutoShorts` folder in VS Code, open the Integrated Terminal (`Ctrl + ~`), and run:
+Open the project folder in VS Code, open the Integrated Terminal (`Ctrl + ~`), and run:
 
 ```bash
 python -m venv venv

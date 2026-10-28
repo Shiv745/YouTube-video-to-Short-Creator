@@ -49,38 +49,61 @@ Rules:
 Transcript:
 {formatted_transcript}
 """
-        max_attempts = 5
-        for attempt in range(1, max_attempts + 1):
-            try:
-                response = self.client.models.generate_content(
-                    model="gemini-3.8-flash",
-                    contents=prompt
-                )
-                break
-            except APIError as error:
-                if error.code == 400 and "API_KEY_INVALID" in str(error.details):
-                    raise InvalidGeminiApiKeyError(
-                        "Gemini rejected the API key. Create or copy a valid Gemini API "
-                        "key from Google AI Studio, replace the key in the sidebar, "
-                        "and try again."
-                    ) from error
-
-                if error.code not in {500, 502, 503, 504}:
-                    raise
-
-                if attempt == max_attempts:
-                    raise GeminiServiceUnavailableError(
-                        "Gemini 3.8 Flash is temporarily unavailable after 5 attempts. "
-                        "Please wait a few minutes and retry."
-                    ) from error
-
-                delay = min(10 * (2 ** (attempt - 1)), 30)
-                if log_callback:
-                    log_callback(
-                        f"Gemini is temporarily unavailable. Retrying in {delay} "
-                        f"seconds (attempt {attempt + 1}/{max_attempts})..."
+        models = [
+            ("gemini-3.8-flash", "Gemini 3.8 Flash"),
+            ("gemini-3.6-flash", "Gemini 3.6 Flash"),
+        ]
+        max_attempts_per_model = 2
+        response = None
+        for model_index, (model, model_name) in enumerate(models):
+            for attempt in range(1, max_attempts_per_model + 1):
+                try:
+                    response = self.client.models.generate_content(
+                        model=model,
+                        contents=prompt,
                     )
-                time.sleep(delay)
+                    if model_index > 0 and log_callback:
+                        log_callback(f"{model_name} fallback succeeded.")
+                    break
+                except APIError as error:
+                    if error.code == 400 and "API_KEY_INVALID" in str(error.details):
+                        raise InvalidGeminiApiKeyError(
+                            "Gemini rejected the API key. Create or copy a valid Gemini API "
+                            "key from Google AI Studio, replace the key in the sidebar, "
+                            "and try again."
+                        ) from error
+
+                    if error.code not in {500, 502, 503, 504}:
+                        raise
+
+                    if attempt < max_attempts_per_model:
+                        delay = 10
+                        if log_callback:
+                            log_callback(
+                                f"{model_name} is temporarily unavailable "
+                                f"(HTTP {error.code}). Retrying in {delay} seconds "
+                                f"(attempt {attempt + 1}/{max_attempts_per_model})..."
+                            )
+                        time.sleep(delay)
+                        continue
+
+                    if model_index < len(models) - 1:
+                        fallback_name = models[model_index + 1][1]
+                        if log_callback:
+                            log_callback(
+                                f"{model_name} remains unavailable (HTTP {error.code}); "
+                                f"switching to {fallback_name}."
+                            )
+                        break
+
+                    raise GeminiServiceUnavailableError(
+                        f"Gemini models are unavailable after trying "
+                        f"{', '.join(name for _, name in models)}. "
+                        f"Last error (HTTP {error.code}): {error}"
+                    ) from error
+
+            if response is not None:
+                break
 
         raw_text = response.text.strip()
         raw_text = re.sub(r"^```(?:json)?", "", raw_text).strip()

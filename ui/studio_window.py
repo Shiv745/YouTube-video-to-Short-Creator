@@ -25,10 +25,10 @@ from core.constants import MAX_SHORT_DURATION_SECONDS, MIN_SHORT_DURATION_SECOND
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-class KixyStudioApp(ctk.CTk):
+class ShivStudioApp(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("KixyStudio 4K — AI Viral Shorts & Reels Creator")
+        self.title("Shiv.Studio 4K — AI Viral Shorts & Reels Creator")
         self.geometry("1120x740")
         self.minsize(1020, 680)
         self.configure(fg_color="#0B0F19")
@@ -57,13 +57,13 @@ class KixyStudioApp(ctk.CTk):
         brand_frame.pack(fill="x", padx=22, pady=(24, 16))
 
         logo_badge = ctk.CTkLabel(
-            brand_frame, text=" K ", font=("Inter", 20, "bold"),
+            brand_frame, text=" S ", font=("Inter", 20, "bold"),
             fg_color="#FACC15", text_color="#0B0F19", corner_radius=8, width=38, height=38
         )
         logo_badge.pack(side="left")
 
         title_lbl = ctk.CTkLabel(
-            brand_frame, text=" kixy.studio 4K", font=("Inter", 21, "bold"), text_color="#F9FAFB"
+            brand_frame, text=" Shiv.Studio 4K", font=("Inter", 21, "bold"), text_color="#F9FAFB"
         )
         title_lbl.pack(side="left", padx=8)
 
@@ -302,7 +302,7 @@ class KixyStudioApp(ctk.CTk):
             console_container, font=("Consolas", 12), fg_color="#0B0F19", text_color="#E5E7EB", corner_radius=10
         )
         self.log_box.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 14))
-        self.log("KixyStudio 4K Engine Initialized.")
+        self.log("Shiv.Studio 4K Engine Initialized.")
         self.log(f"Output Directory: {self.output_dir}")
 
     def _close_app(self):
