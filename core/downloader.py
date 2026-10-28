@@ -13,6 +13,7 @@ class VideoDownloader:
         url: str,
         progress_callback=None,
         cancel_event: threading.Event = None,
+        cookie_browser: str = None,
     ) -> dict:
         if cancel_event and cancel_event.is_set():
             raise PipelineCancelledError("Processing stopped by user.")
@@ -53,6 +54,8 @@ class VideoDownloader:
             'ffmpeg_location': find_ffmpeg(),
             'progress_hooks': [hook]
         }
+        if cookie_browser:
+            ydl_opts['cookiesfrombrowser'] = (cookie_browser,)
 
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)

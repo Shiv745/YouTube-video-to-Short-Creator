@@ -13,6 +13,7 @@ A full-featured Python desktop application inspired by **kixy.ai** and **OpusCli
 6. **Modern Dark Studio UI:** Built with `CustomTkinter`, featuring a sidebar settings panel, virality score cards, live telemetry logs, and VS Code single-click debugging.
 7. **Pipeline Cancellation:** Stop an active run from the main toolbar; downloads and FFmpeg renders stop promptly, while transcription and Gemini requests stop after the current operation finishes.
 8. **Persistent Source Downloads:** Completed YouTube downloads are saved in `downloaded_videos/` and reused on later runs for the same link, including after processing errors or app restarts.
+9. **YouTube Sign-In:** If YouTube requires verification, choose the browser where you are signed in from the sidebar. The app reads that browser's cookies locally through yt-dlp; public videos do not require this setting.
 
 ---
 

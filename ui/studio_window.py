@@ -81,6 +81,31 @@ class KixyStudioApp(ctk.CTk):
         )
         self.api_entry.pack(fill="x", padx=22, pady=(4, 12))
 
+        ctk.CTkLabel(
+            self.sidebar,
+            text="YouTube Sign-in Browser (if requested):",
+            font=("Inter", 12),
+            text_color="#D1D5DB",
+            anchor="w",
+        ).pack(fill="x", padx=22)
+        self.youtube_browser_menu = ctk.CTkOptionMenu(
+            self.sidebar,
+            values=["None (public videos)", "Chrome", "Edge", "Firefox", "Brave"],
+            height=36,
+            fg_color="#1F2937",
+            button_color="#2563EB",
+            button_hover_color="#1D4ED8",
+        )
+        self.youtube_browser_menu.pack(fill="x", padx=22, pady=(4, 12))
+        ctk.CTkLabel(
+            self.sidebar,
+            text="Uses your selected browser's local YouTube sign-in.",
+            font=("Inter", 10),
+            text_color="#9CA3AF",
+            anchor="w",
+            wraplength=250,
+        ).pack(fill="x", padx=22, pady=(0, 8))
+
         # Resolution Selector
         ctk.CTkLabel(self.sidebar, text="Export Resolution:", font=("Inter", 12), text_color="#D1D5DB", anchor="w").pack(fill="x", padx=22)
         self.res_menu = ctk.CTkOptionMenu(
@@ -332,9 +357,14 @@ class KixyStudioApp(ctk.CTk):
         self.start_btn.configure(state="disabled", text="⏳ Rendering 4K...")
         self._cancel_event = threading.Event()
         self.stop_btn.configure(state="normal", text="⏹ Stop")
+        selected_browser = self.youtube_browser_menu.get()
+        cookie_browser = (
+            None if selected_browser == "None (public videos)"
+            else selected_browser.lower()
+        )
         threading.Thread(
             target=self._pipeline_worker,
-            args=(source_input, api_key, self._cancel_event),
+            args=(source_input, api_key, cookie_browser, self._cancel_event),
             daemon=True
         ).start()
 
@@ -354,6 +384,7 @@ class KixyStudioApp(ctk.CTk):
         self,
         source_input: str,
         api_key: str,
+        cookie_browser: str,
         cancel_event: threading.Event,
     ):
         try:
@@ -376,6 +407,7 @@ class KixyStudioApp(ctk.CTk):
                     source_input,
                     progress_callback=lambda msg: self.set_status(f"Step 1/4: {msg}", 0.18),
                     cancel_event=cancel_event,
+                    cookie_browser=cookie_browser,
                 )
                 video_path = info["filepath"]
                 if info["cached"]:
@@ -467,8 +499,20 @@ class KixyStudioApp(ctk.CTk):
             self.set_status("❌ Gemini is temporarily unavailable. Try again shortly.", 0.0)
             self.log(f"\n[!] ERROR: {e}")
         except Exception as e:
-            self.set_status("❌ Error during processing. Check console log.", 0.0)
-            self.log(f"\n[!] ERROR: {str(e)}")
+            error_text = str(e)
+            if "sign in to confirm" in error_text.lower():
+                self.set_status(
+                    "❌ YouTube requires sign-in. Select your browser and retry.",
+                    0.0,
+                )
+                self.log(
+                    f"\n[!] ERROR: {error_text}\n"
+                    "[!] Select the browser where you are signed in to YouTube, "
+                    "then retry. Your browser cookies stay on this computer."
+                )
+            else:
+                self.set_status("❌ Error during processing. Check console log.", 0.0)
+                self.log(f"\n[!] ERROR: {error_text}")
         finally:
             def _finish_pipeline():
                 self.start_btn.configure(state="normal", text="✨ Generate 4K Shorts")
