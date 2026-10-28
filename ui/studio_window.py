@@ -271,7 +271,22 @@ class KixyStudioApp(ctk.CTk):
         ctk.CTkLabel(
             clips_container, text="🎬 GENERATED 4K VIRAL CLIPS",
             font=("Inter", 12, "bold"), text_color="#9CA3AF", anchor="w"
-        ).grid(row=0, column=0, padx=18, pady=(14, 6), sticky="ew")
+        ).grid(row=0, column=0, padx=18, pady=(14, 6), sticky="w")
+
+        self.results_open_folder_btn = ctk.CTkButton(
+            clips_container,
+            text="📂 Open Output Folder",
+            width=155,
+            height=30,
+            fg_color="#1F2937",
+            hover_color="#374151",
+            border_width=1,
+            border_color="#4B5563",
+            command=self.open_output_folder,
+        )
+        self.results_open_folder_btn.grid(
+            row=0, column=1, padx=(0, 14), pady=(10, 4), sticky="e"
+        )
 
         self.clips_scroll = ctk.CTkScrollableFrame(clips_container, fg_color="transparent")
         self.clips_scroll.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 12))
