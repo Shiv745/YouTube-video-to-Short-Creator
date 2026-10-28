@@ -27,7 +27,10 @@ class VideoDownloader:
 
         if os.path.isfile(output_path) and os.path.getsize(output_path) > 0:
             if progress_callback:
-                progress_callback(f"Using previously downloaded video: {output_path}")
+                progress_callback(
+                    f"Using previously downloaded video: {output_path}",
+                    1.0,
+                )
             return {
                 "title": "Previously downloaded video",
                 "duration": 0,
@@ -42,7 +45,18 @@ class VideoDownloader:
             if progress_callback and d.get('status') == 'downloading':
                 percent_str = d.get('_percent_str', '').strip()
                 speed_str = d.get('_speed_str', 'N/A').strip()
-                progress_callback(f"Downloading source video: {percent_str} (Speed: {speed_str})")
+                eta_str = d.get('_eta_str', 'unknown').strip()
+                try:
+                    fraction = float(percent_str.rstrip("%")) / 100
+                except ValueError:
+                    total = d.get('total_bytes') or d.get('total_bytes_estimate')
+                    downloaded = d.get('downloaded_bytes')
+                    fraction = downloaded / total if total else None
+                progress_callback(
+                    f"Downloading source video: {percent_str} "
+                    f"(Speed: {speed_str}, ETA: {eta_str})",
+                    fraction,
+                )
 
         # Prioritize highest resolution up to 4K (2160p) MP4 stream
         ydl_opts = {

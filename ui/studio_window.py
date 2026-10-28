@@ -1,8 +1,10 @@
+import json
 import os
 import re
 import sys
 import subprocess
 import threading
+import time
 from tkinter import filedialog
 import customtkinter as ctk
 
@@ -17,6 +19,12 @@ from core.clip_finder import (
 from core.subtitles import SubtitleGenerator
 from core.video_engine_4k import VideoEngine4K
 from core.constants import MAX_SHORT_DURATION_SECONDS
+from core.session_store import (
+    SessionStorageError,
+    clear_session,
+    load_session,
+    save_session,
+)
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -31,10 +39,14 @@ class KixyStudioApp(ctk.CTk):
 
         self.local_video_path = None
         self._cancel_event = None
+        self._progress_indeterminate = False
+        self._closing_requested = False
         self.output_dir = os.path.abspath("output_4k_shorts")
         os.makedirs(self.output_dir, exist_ok=True)
 
         self._build_layout()
+        self._restore_session()
+        self.protocol("WM_DELETE_WINDOW", self._close_app)
 
     def _build_layout(self):
         self.grid_columnconfigure(1, weight=1)
@@ -80,6 +92,15 @@ class KixyStudioApp(ctk.CTk):
             show="*", height=36, fg_color="#1F2937", border_color="#374151"
         )
         self.api_entry.pack(fill="x", padx=22, pady=(4, 12))
+        self.saved_session_lbl = ctk.CTkLabel(
+            self.sidebar,
+            text="Link and API key are saved securely for up to 48 hours when you start processing.",
+            font=("Inter", 10),
+            text_color="#9CA3AF",
+            anchor="w",
+            wraplength=250,
+        )
+        self.saved_session_lbl.pack(fill="x", padx=22, pady=(0, 10))
 
         ctk.CTkLabel(
             self.sidebar,
@@ -225,6 +246,14 @@ class KixyStudioApp(ctk.CTk):
         self.progress_bar = ctk.CTkProgressBar(status_frame, height=10, progress_color="#2563EB")
         self.progress_bar.grid(row=1, column=0, sticky="ew")
         self.progress_bar.set(0.0)
+        self.progress_detail_lbl = ctk.CTkLabel(
+            status_frame,
+            text="Ready • 0% complete",
+            font=("Inter", 11),
+            text_color="#9CA3AF",
+            anchor="w",
+        )
+        self.progress_detail_lbl.grid(row=2, column=0, sticky="w", pady=(5, 0))
 
         # Dual Split View: Left = Generated Viral Clips Cards, Right = Live Studio Telemetry Console
         split_frame = ctk.CTkFrame(self.main_area, fg_color="transparent")
@@ -266,6 +295,63 @@ class KixyStudioApp(ctk.CTk):
         self.log("KixyStudio 4K Engine Initialized.")
         self.log(f"Output Directory: {self.output_dir}")
 
+    def _restore_session(self):
+        try:
+            session = load_session()
+        except SessionStorageError as error:
+            self.log(f"[!] Saved session could not be restored: {error}")
+            self.saved_session_lbl.configure(
+                text="Saved session unavailable. Re-enter your link and API key."
+            )
+            return
+
+        if not session:
+            return
+
+        self.url_entry.insert(0, session["url"])
+        self.api_entry.insert(0, session["api_key"])
+        expires_at = session["expires_at"].astimezone().strftime("%b %d, %I:%M %p")
+        self.saved_session_lbl.configure(
+            text=f"Link and API key restored securely • expires {expires_at}."
+        )
+        self.log(f"Restored saved link and protected API key (expires {expires_at}).")
+
+    def _save_session(self):
+        url = self.url_entry.get().strip()
+        api_key = self.api_entry.get().strip()
+        if not url or not api_key:
+            try:
+                clear_session()
+            except SessionStorageError as error:
+                self.log(f"[!] Saved session could not be cleared: {error}")
+            return True
+
+        try:
+            expires_at = save_session(url, api_key)
+        except SessionStorageError as error:
+            self.saved_session_lbl.configure(
+                text="Could not securely save the link and API key."
+            )
+            self.log(f"[!] Session was not saved: {error}")
+            return False
+
+        expires_local = expires_at.astimezone().strftime("%b %d, %I:%M %p")
+        self.saved_session_lbl.configure(
+            text=f"Link saved • API key protected by Windows • expires {expires_local}."
+        )
+        return True
+
+    def _close_app(self):
+        self._save_session()
+        if self._cancel_event:
+            self._closing_requested = True
+            self._cancel_event.set()
+            self.stop_btn.configure(state="disabled", text="Stopping...")
+            self.set_status("Stopping safely before closing...", None)
+            self.log("[!] Closing requested; waiting for the current operation to stop.")
+            return
+        self.destroy()
+
     def _update_slider_label(self, val):
         self.clip_count_lbl.configure(text=f"Max Viral Clips to Generate: {int(val)}")
 
@@ -280,8 +366,122 @@ class KixyStudioApp(ctk.CTk):
         def _update():
             self.status_lbl.configure(text=text)
             if progress is not None:
+                if self._progress_indeterminate:
+                    self.progress_bar.stop()
+                    self._progress_indeterminate = False
                 self.progress_bar.set(progress)
         self.after(0, _update)
+
+    def set_pipeline_progress(
+        self,
+        status: str,
+        progress: float,
+        detail: str,
+        indeterminate: bool = False,
+    ):
+        bounded_progress = min(1.0, max(0.0, progress))
+
+        def _update():
+            self.status_lbl.configure(text=status)
+            self.progress_detail_lbl.configure(text=detail)
+            if indeterminate != self._progress_indeterminate:
+                if indeterminate:
+                    self.progress_bar.start()
+                else:
+                    self.progress_bar.stop()
+                self._progress_indeterminate = indeterminate
+            if not indeterminate:
+                self.progress_bar.set(bounded_progress)
+
+        self.after(0, _update)
+
+    @staticmethod
+    def _is_retryable_error(error: Exception) -> bool:
+        if isinstance(error, json.JSONDecodeError):
+            return True
+        if isinstance(
+            error, (InvalidGeminiApiKeyError, GeminiServiceUnavailableError, PipelineCancelledError),
+        ):
+            return False
+        if isinstance(
+            error,
+            (TimeoutError, ConnectionError, subprocess.TimeoutExpired),
+        ):
+            return True
+
+        message = str(error).lower()
+        permanent_markers = (
+            "sign in to confirm",
+            "api_key_invalid",
+            "invalid api key",
+            "permission denied",
+            "forbidden",
+            "no space left",
+            "disk full",
+            "unsupported",
+        )
+        if any(marker in message for marker in permanent_markers):
+            return False
+
+        transient_markers = (
+            "timed out",
+            "timeout",
+            "temporarily unavailable",
+            "temporary failure",
+            "connection reset",
+            "connection aborted",
+            "connection refused",
+            "network is unreachable",
+            "server disconnected",
+            "try again",
+            "rate limit",
+            "resource_exhausted",
+            "429",
+            "http error 429",
+            "http error 500",
+            "http error 502",
+            "http error 503",
+            "http error 504",
+            "resource temporarily unavailable",
+        )
+        return any(marker in message for marker in transient_markers)
+
+    def _run_with_retries(
+        self,
+        stage_name,
+        operation,
+        cancel_event,
+        overall_progress,
+        remaining_detail,
+    ):
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            self._check_cancelled(cancel_event)
+            try:
+                return operation()
+            except PipelineCancelledError:
+                raise
+            except Exception as error:
+                if attempt >= max_attempts or not self._is_retryable_error(error):
+                    self.log(
+                        f"[!] {stage_name} failed ({type(error).__name__}): {error}"
+                    )
+                    raise
+
+                delay = 2 ** attempt
+                self.log(
+                    f"[AUTO-RECOVERY] {stage_name} failed temporarily "
+                    f"({type(error).__name__}: {error}). Retrying in {delay}s "
+                    f"(attempt {attempt + 1}/{max_attempts})."
+                )
+                self.set_pipeline_progress(
+                    f"⚠ Recovering {stage_name} after a temporary error...",
+                    overall_progress,
+                    f"Automatic retry {attempt + 1}/{max_attempts} • "
+                    f"waiting {delay}s • {remaining_detail}",
+                )
+                if cancel_event.wait(delay):
+                    raise PipelineCancelledError("Processing stopped by user.")
 
     def select_local_file(self):
         filepath = filedialog.askopenfilename(
@@ -355,6 +555,7 @@ class KixyStudioApp(ctk.CTk):
             self.log("[!] Please enter your Gemini API Key in the left sidebar.")
             return
 
+        self._save_session()
         self.start_btn.configure(state="disabled", text="⏳ Rendering 4K...")
         self._cancel_event = threading.Event()
         self.stop_btn.configure(state="normal", text="⏹ Stop")
@@ -363,9 +564,18 @@ class KixyStudioApp(ctk.CTk):
             None if selected_browser == "None (public videos)"
             else selected_browser.lower()
         )
+        options = {
+            "max_clips": int(self.clip_slider.get()),
+            "resolution": self.res_menu.get(),
+            "layout": self.layout_menu.get(),
+            "caption_style": self.caption_menu.get(),
+            "whisper_model": self.whisper_menu.get(),
+        }
+        self.progress_bar.set(0.0)
+        self.progress_detail_lbl.configure(text="Starting • 0% complete")
         threading.Thread(
             target=self._pipeline_worker,
-            args=(source_input, api_key, cookie_browser, self._cancel_event),
+            args=(source_input, api_key, cookie_browser, options, self._cancel_event),
             daemon=True
         ).start()
 
@@ -381,36 +591,84 @@ class KixyStudioApp(ctk.CTk):
         if cancel_event.is_set():
             raise PipelineCancelledError("Processing stopped by user.")
 
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        seconds = max(0, int(seconds))
+        hours, remainder = divmod(seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours:
+            return f"{hours}h {minutes}m"
+        if minutes:
+            return f"{minutes}m {seconds}s"
+        return f"{seconds}s"
+
     def _pipeline_worker(
         self,
         source_input: str,
         api_key: str,
         cookie_browser: str,
+        options: dict,
         cancel_event: threading.Event,
     ):
+        overall_progress = 0.0
+        pipeline_started_at = time.monotonic()
         try:
             self._check_cancelled(cancel_event)
-            max_clips = int(self.clip_slider.get())
-            res_preset = self.res_menu.get()
-            layout_mode = self.layout_menu.get()
-            caption_style = self.caption_menu.get()
-            whisper_model = self.whisper_menu.get()
+            max_clips = options["max_clips"]
+            res_preset = options["resolution"]
+            layout_mode = options["layout"]
+            caption_style = options["caption_style"]
+            whisper_model = options["whisper_model"]
 
             # Step 1: Acquire Source Video
             if os.path.exists(source_input):
                 video_path = source_input
-                self.set_status("Step 1/4: Using local source video...", 0.2)
+                overall_progress = 0.10
+                self.set_pipeline_progress(
+                    "Step 1/4: Using local source video...",
+                    overall_progress,
+                    "Overall estimate: 10% • 1/4 stages complete • 3 stages remaining",
+                )
                 self.log(f"\n[1/4] Loaded local video: {video_path}")
             else:
-                self.set_status("Step 1/4: Downloading highest-resolution video from YouTube...", 0.1)
+                self.set_pipeline_progress(
+                    "Step 1/4: Downloading highest-resolution video from YouTube...",
+                    0.0,
+                    "Overall estimate: 0% • Download progress will update below",
+                )
                 self.log("\n[1/4] Downloading source video via yt-dlp...")
-                info = VideoDownloader.download_youtube_video(
-                    source_input,
-                    progress_callback=lambda msg: self.set_status(f"Step 1/4: {msg}", 0.18),
-                    cancel_event=cancel_event,
-                    cookie_browser=cookie_browser,
+
+                def report_download_progress(message, fraction):
+                    if fraction is None:
+                        fraction = 0.0
+                        download_detail = "Download progress unavailable"
+                    else:
+                        fraction = min(1.0, max(0.0, fraction))
+                        eta_text = message.rsplit("ETA: ", 1)[-1]
+                        download_detail = (
+                            f"Download: {fraction:.0%} • ETA {eta_text}"
+                        )
+                    progress = 0.10 * fraction
+                    self.set_pipeline_progress(
+                        f"Step 1/4: {message}",
+                        progress,
+                        f"Overall estimate: {progress:.0%} • {download_detail}",
+                    )
+
+                info = self._run_with_retries(
+                    "YouTube download",
+                    lambda: VideoDownloader.download_youtube_video(
+                        source_input,
+                        progress_callback=report_download_progress,
+                        cancel_event=cancel_event,
+                        cookie_browser=cookie_browser,
+                    ),
+                    cancel_event,
+                    overall_progress,
+                    "download remains incomplete",
                 )
                 video_path = info["filepath"]
+                overall_progress = 0.10
                 if info["cached"]:
                     self.log(f" -> Reusing saved video: {video_path}")
                 else:
@@ -421,35 +679,102 @@ class KixyStudioApp(ctk.CTk):
 
             # Step 2: Whisper Word-Level Transcription
             self._check_cancelled(cancel_event)
-            self.set_status("Step 2/4: Transcribing audio with word-level timestamps...", 0.35)
+            self.set_pipeline_progress(
+                "Step 2/4: Transcribing audio with word-level timestamps...",
+                overall_progress,
+                f"Overall estimate: {overall_progress:.0%} • "
+                f"Transcription in progress • AI analysis + up to {max_clips} "
+                "renders remain • ETA unavailable",
+                indeterminate=True,
+            )
             self.log(f"\n[2/4] Running Whisper ({whisper_model}) speech-to-text...")
             transcriber = AudioTranscriber(model_size=whisper_model)
-            whisper_result = transcriber.transcribe_with_words(video_path, log_callback=self.log)
+            whisper_result = self._run_with_retries(
+                "Whisper transcription",
+                lambda: transcriber.transcribe_with_words(
+                    video_path,
+                    log_callback=self.log,
+                ),
+                cancel_event,
+                overall_progress,
+                "transcription and analysis remain",
+            )
             self._check_cancelled(cancel_event)
             formatted_transcript = AudioTranscriber.format_for_llm(whisper_result)
+            overall_progress = 0.45
+            self.set_pipeline_progress(
+                "Step 2/4: Transcription complete.",
+                overall_progress,
+                f"Overall estimate: 45% • 2/4 stages complete • "
+                f"{max_clips} clips to analyze and render",
+            )
             self.log(f" -> Extracted {len(whisper_result.get('segments', []))} speech segments.")
 
             # Step 3: Gemini Viral Clip Selection
             self._check_cancelled(cancel_event)
-            self.set_status("Step 3/4: Gemini AI analyzing hooks & virality scores...", 0.60)
+            self.set_pipeline_progress(
+                "Step 3/4: Gemini AI analyzing hooks & virality scores...",
+                overall_progress,
+                f"Overall estimate: 45% • AI analysis in progress • "
+                f"{max_clips} clip renders remain • ETA unavailable",
+                indeterminate=True,
+            )
             self.log(f"\n[3/4] Finding top {max_clips} viral hooks with Gemini 3.8 Flash...")
             finder = ViralClipFinder(api_key=api_key)
-            clips = finder.find_best_clips(
-                formatted_transcript,
-                max_clips=max_clips,
-                max_sec=MAX_SHORT_DURATION_SECONDS,
-                log_callback=self.log,
+            clips = self._run_with_retries(
+                "Gemini analysis",
+                lambda: finder.find_best_clips(
+                    formatted_transcript,
+                    max_clips=max_clips,
+                    max_sec=MAX_SHORT_DURATION_SECONDS,
+                    log_callback=self.log,
+                ),
+                cancel_event,
+                overall_progress,
+                f"{max_clips} clips remain to render",
             )
             self._check_cancelled(cancel_event)
+            overall_progress = 0.55
             self.log(f" -> Gemini selected {len(clips)} high-retention clips.")
 
             # Step 4: 4K Smart Render + Animated Subtitles
             self.log(f"\n[4/4] Rendering vertical shorts in {res_preset}...")
+            render_started_at = time.monotonic()
             for idx, clip in enumerate(clips, 1):
                 self._check_cancelled(cancel_event)
-                progress_val = 0.60 + (0.38 * (idx / max(1, len(clips))))
                 safe_title = re.sub(r"[^a-zA-Z0-9_-]", "_", clip.get("title", f"clip_{idx}"))
-                self.set_status(f"Step 4/4: Rendering 4K Short #{idx} ({safe_title})...", progress_val)
+                clip_started_at = time.monotonic()
+                clip_count = max(1, len(clips))
+
+                def report_render_progress(fraction, clip_index=idx):
+                    nonlocal overall_progress
+                    fraction = min(1.0, max(0.0, fraction))
+                    completed_render_units = (clip_index - 1) + fraction
+                    render_fraction = completed_render_units / clip_count
+                    progress = 0.55 + (0.45 * render_fraction)
+                    overall_progress = progress
+                    clip_elapsed = time.monotonic() - clip_started_at
+                    remaining_units = max(0.0, clip_count - completed_render_units)
+                    eta = None
+                    if fraction > 0.02 and clip_elapsed > 0:
+                        eta = clip_elapsed * remaining_units / completed_render_units
+                    eta_text = (
+                        f"ETA about {self._format_duration(eta)}"
+                        if eta is not None
+                        else "ETA estimating"
+                    )
+                    self.set_pipeline_progress(
+                        f"Step 4/4: Rendering 4K Short #{clip_index} "
+                        f"({fraction:.0%}) — {safe_title}",
+                        progress,
+                        f"Overall estimate: {progress:.0%} • "
+                        f"Clip {clip_index}/{clip_count} • "
+                        f"{clip_index - 1} completed • "
+                        f"{clip_count - clip_index + (1 if fraction < 1 else 0)} remaining • "
+                        f"{eta_text}",
+                    )
+
+                report_render_progress(0.0)
 
                 start_s = float(clip["start"])
                 end_s = min(
@@ -465,16 +790,23 @@ class KixyStudioApp(ctk.CTk):
 
                 out_file = os.path.join(self.output_dir, f"4K_Short_{idx}_{safe_title}.mp4")
                 try:
-                    VideoEngine4K.render_4k_short(
-                        source_video=video_path,
-                        output_file=out_file,
-                        start_sec=start_s,
-                        end_sec=end_s,
-                        ass_subtitle_file=ass_path,
-                        layout_mode=layout_mode,
-                        resolution_preset=res_preset,
-                        log_callback=self.log,
-                        cancel_event=cancel_event,
+                    self._run_with_retries(
+                        f"Rendering clip {idx}",
+                        lambda: VideoEngine4K.render_4k_short(
+                            source_video=video_path,
+                            output_file=out_file,
+                            start_sec=start_s,
+                            end_sec=end_s,
+                            ass_subtitle_file=ass_path,
+                            layout_mode=layout_mode,
+                            resolution_preset=res_preset,
+                            log_callback=self.log,
+                            cancel_event=cancel_event,
+                            progress_callback=report_render_progress,
+                        ),
+                        cancel_event,
+                        overall_progress,
+                        f"{len(clips) - idx + 1} render(s) remain",
                     )
                 finally:
                     if os.path.exists(ass_path):
@@ -483,28 +815,62 @@ class KixyStudioApp(ctk.CTk):
                         except OSError as exc:
                             self.log(f"[!] Could not remove temporary subtitle file '{ass_path}': {exc}")
 
+                overall_progress = 0.55 + (0.45 * (idx / clip_count))
+                clip_elapsed = time.monotonic() - render_started_at
+                eta = (
+                    clip_elapsed * (len(clips) - idx) / idx
+                    if idx < len(clips)
+                    else 0
+                )
+                self.set_pipeline_progress(
+                    f"Step 4/4: Clip {idx}/{len(clips)} rendered.",
+                    overall_progress,
+                    f"Overall estimate: {overall_progress:.0%} • "
+                    f"{idx} completed • {len(clips) - idx} clips remaining • "
+                    f"ETA about {self._format_duration(eta)}",
+                )
                 self.log(f" -> Saved 4K Short: {out_file}")
                 self.add_clip_card(idx, clip, out_file, res_preset)
 
             self._check_cancelled(cancel_event)
-            self.set_status("✅ All 4K Viral Shorts Rendered & Ready to Upload!", 1.0)
+            elapsed = time.monotonic() - pipeline_started_at
+            overall_progress = 1.0
+            self.set_pipeline_progress(
+                "✅ All 4K Viral Shorts Rendered & Ready to Upload!",
+                overall_progress,
+                f"Complete • {len(clips)} clips rendered • "
+                f"total time {self._format_duration(elapsed)} • no work remaining",
+            )
             self.log("\n🎉 Render Complete! Click 'Open 4K Output Folder' to view your videos.")
 
         except PipelineCancelledError:
-            self.set_status("⏹ Processing stopped.", 0.0)
+            self.set_pipeline_progress(
+                "⏹ Processing stopped.",
+                overall_progress,
+                f"Stopped at about {overall_progress:.0%} • completed clips remain saved.",
+            )
             self.log("\n⏹ Processing stopped by user.")
         except InvalidGeminiApiKeyError as e:
-            self.set_status("❌ Gemini API key rejected. Update it and retry.", 0.0)
+            self.set_pipeline_progress(
+                "❌ Gemini API key rejected. Update it and retry.",
+                overall_progress,
+                "Stopped • check the API key in the sidebar.",
+            )
             self.log(f"\n[!] ERROR: {e}")
         except GeminiServiceUnavailableError as e:
-            self.set_status("❌ Gemini is temporarily unavailable. Try again shortly.", 0.0)
+            self.set_pipeline_progress(
+                "❌ Gemini is still unavailable after its automatic retries.",
+                overall_progress,
+                "Stopped • completed work is preserved • retry later.",
+            )
             self.log(f"\n[!] ERROR: {e}")
         except Exception as e:
             error_text = str(e)
             if "sign in to confirm" in error_text.lower():
-                self.set_status(
+                self.set_pipeline_progress(
                     "❌ YouTube requires sign-in. Select your browser and retry.",
-                    0.0,
+                    overall_progress,
+                    "Stopped • sign-in is required; choose a signed-in browser.",
                 )
                 self.log(
                     f"\n[!] ERROR: {error_text}\n"
@@ -512,10 +878,22 @@ class KixyStudioApp(ctk.CTk):
                     "then retry. Your browser cookies stay on this computer."
                 )
             else:
-                self.set_status("❌ Error during processing. Check console log.", 0.0)
-                self.log(f"\n[!] ERROR: {error_text}")
+                self.set_pipeline_progress(
+                    f"❌ Processing stopped after automatic recovery attempts: {error_text[:100]}",
+                    overall_progress,
+                    f"Stopped at about {overall_progress:.0%} • "
+                    "completed clips are saved • see telemetry for recovery details",
+                )
+                self.log(
+                    f"\n[!] ERROR: {type(e).__name__}: {error_text}\n"
+                    "[!] Automatic recovery was attempted where the error appeared temporary. "
+                    "The saved source video and completed clips were kept."
+                )
         finally:
             def _finish_pipeline():
+                if self._closing_requested:
+                    self.destroy()
+                    return
                 self.start_btn.configure(state="normal", text="✨ Generate 4K Shorts")
                 self.stop_btn.configure(state="disabled", text="⏹ Stop")
                 self._cancel_event = None

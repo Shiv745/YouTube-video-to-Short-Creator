@@ -1,6 +1,8 @@
 import os
 import subprocess
 import threading
+import time
+from collections import deque
 import cv2
 import numpy as np
 
@@ -61,6 +63,7 @@ class VideoEngine4K:
         resolution_preset: str = "4K UHD (2160x3840)",
         log_callback=None,
         cancel_event: threading.Event = None,
+        progress_callback=None,
     ):
         if cancel_event and cancel_event.is_set():
             raise PipelineCancelledError("Processing stopped by user.")
@@ -107,6 +110,8 @@ class VideoEngine4K:
                 "-c:a", "aac",
                 "-b:a", "256k",
                 "-af", "loudnorm=I=-14:TP=-1.0:LRA=11",
+                "-progress", "pipe:1",
+                "-nostats",
                 output_file
             ]
         else:
@@ -132,42 +137,90 @@ class VideoEngine4K:
                 "-c:a", "aac",
                 "-b:a", "256k",
                 "-af", "loudnorm=I=-14:TP=-1.0:LRA=11",
+                "-progress", "pipe:1",
+                "-nostats",
                 output_file
             ]
 
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
+        stderr_lines = deque(maxlen=40)
+
+        def read_progress():
+            current_time = 0.0
+            for line in proc.stdout:
+                key, separator, value = line.partition("=")
+                if not separator:
+                    continue
+                if key == "out_time":
+                    try:
+                        hours, minutes, seconds = value.strip().split(":")
+                        current_time = (
+                            int(hours) * 3600
+                            + int(minutes) * 60
+                            + float(seconds)
+                        )
+                    except ValueError:
+                        continue
+                elif key == "out_time_ms":
+                    try:
+                        current_time = int(value.strip()) / 1_000_000
+                    except ValueError:
+                        continue
+                elif key == "progress" and value.strip() == "end":
+                    current_time = duration
+
+                if progress_callback:
+                    progress_callback(min(1.0, current_time / duration))
+
+        def read_errors():
+            for line in proc.stderr:
+                stderr_lines.append(line.rstrip())
+
+        progress_thread = threading.Thread(target=read_progress, daemon=True)
+        error_thread = threading.Thread(target=read_errors, daemon=True)
+        progress_thread.start()
+        error_thread.start()
+        cancelled = False
         try:
-            while True:
-                try:
-                    _, stderr = proc.communicate(timeout=0.2)
+            while proc.poll() is None:
+                if cancel_event and cancel_event.wait(0.2):
+                    cancelled = True
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
                     break
-                except subprocess.TimeoutExpired:
-                    if cancel_event and cancel_event.is_set():
-                        proc.terminate()
-                        try:
-                            proc.communicate(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            proc.kill()
-                            proc.communicate()
-                        if os.path.exists(output_file):
-                            try:
-                                os.remove(output_file)
-                            except OSError as exc:
-                                raise RuntimeError(
-                                    f"Unable to remove incomplete render '{output_file}': {exc}"
-                                ) from exc
-                        raise PipelineCancelledError("Processing stopped by user.")
+                time.sleep(0.05)
+            proc.wait()
         except BaseException:
             if proc.poll() is None:
                 proc.kill()
-                proc.communicate()
+                proc.wait()
             raise
+        finally:
+            progress_thread.join(timeout=2)
+            error_thread.join(timeout=2)
+
+        if cancelled:
+            if os.path.exists(output_file):
+                try:
+                    os.remove(output_file)
+                except OSError as exc:
+                    raise RuntimeError(
+                        f"Unable to remove incomplete render '{output_file}': {exc}"
+                    ) from exc
+            raise PipelineCancelledError("Processing stopped by user.")
 
         if proc.returncode != 0:
+            stderr = "\n".join(stderr_lines)
             raise RuntimeError(f"FFmpeg Render Error: {stderr[-400:]}")
         return output_file

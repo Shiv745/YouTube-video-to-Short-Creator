@@ -14,6 +14,8 @@ A full-featured Python desktop application inspired by **kixy.ai** and **OpusCli
 7. **Pipeline Cancellation:** Stop an active run from the main toolbar; downloads and FFmpeg renders stop promptly, while transcription and Gemini requests stop after the current operation finishes.
 8. **Persistent Source Downloads:** Completed YouTube downloads are saved in `downloaded_videos/` and reused on later runs for the same link, including after processing errors or app restarts.
 9. **YouTube Sign-In:** If YouTube requires verification, choose the browser where you are signed in from the sidebar. The app reads that browser's cookies locally through yt-dlp; public videos do not require this setting.
+10. **Progress and Recovery:** Shows download/render percentages, completed and remaining clips, and time estimates where measurable. Transcription and AI analysis show an activity indicator because those libraries do not expose reliable progress. Temporary errors retry automatically with bounded attempts; Gemini uses its own retry policy. Sign-in, invalid credentials, and other non-retryable errors remain visible in telemetry.
+11. **48-Hour Session Restore:** The last link and Gemini API key are restored for up to 48 hours. On Windows, the key is protected with the current Windows user's DPAPI and is never written to the session file in plaintext.
 
 ---
 
