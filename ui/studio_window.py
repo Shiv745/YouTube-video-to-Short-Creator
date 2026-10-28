@@ -374,12 +374,17 @@ class KixyStudioApp(ctk.CTk):
                 self.log("\n[1/4] Downloading source video via yt-dlp...")
                 info = VideoDownloader.download_youtube_video(
                     source_input,
-                    output_path="temp_source.mp4",
                     progress_callback=lambda msg: self.set_status(f"Step 1/4: {msg}", 0.18),
                     cancel_event=cancel_event,
                 )
                 video_path = info["filepath"]
-                self.log(f" -> Downloaded '{info['title']}' ({info['resolution']})")
+                if info["cached"]:
+                    self.log(f" -> Reusing saved video: {video_path}")
+                else:
+                    self.log(
+                        f" -> Downloaded '{info['title']}' ({info['resolution']})"
+                        f"\n -> Saved locally: {video_path}"
+                    )
 
             # Step 2: Whisper Word-Level Transcription
             self._check_cancelled(cancel_event)

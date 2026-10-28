@@ -4,6 +4,7 @@ __pycache__/
 **/__pycache__/
 *.py[cod]
 output_4k_shorts/
+downloaded_videos/
 temp_source.mp4
 app-startup.log
 app-startup-error.log

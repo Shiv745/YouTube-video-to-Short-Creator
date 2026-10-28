@@ -12,6 +12,7 @@ A full-featured Python desktop application inspired by **kixy.ai** and **OpusCli
 5. **Broadcast Audio Mastering:** Automatically normalizes audio loudness to `-14 LUFS` (`loudnorm`) at `256 kbps` AAC so your Shorts sound punchy on mobile devices.
 6. **Modern Dark Studio UI:** Built with `CustomTkinter`, featuring a sidebar settings panel, virality score cards, live telemetry logs, and VS Code single-click debugging.
 7. **Pipeline Cancellation:** Stop an active run from the main toolbar; downloads and FFmpeg renders stop promptly, while transcription and Gemini requests stop after the current operation finishes.
+8. **Persistent Source Downloads:** Completed YouTube downloads are saved in `downloaded_videos/` and reused on later runs for the same link, including after processing errors or app restarts.
 
 ---
 

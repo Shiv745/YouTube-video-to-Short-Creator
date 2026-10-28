@@ -1,3 +1,4 @@
+import hashlib
 import os
 import threading
 from yt_dlp import YoutubeDL
@@ -10,15 +11,29 @@ class VideoDownloader:
     @staticmethod
     def download_youtube_video(
         url: str,
-        output_path: str = "temp_source.mp4",
         progress_callback=None,
         cancel_event: threading.Event = None,
     ) -> dict:
-        if os.path.exists(output_path):
-            try:
-                os.remove(output_path)
-            except OSError:
-                pass
+        if cancel_event and cancel_event.is_set():
+            raise PipelineCancelledError("Processing stopped by user.")
+
+        cache_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "downloaded_videos")
+        )
+        os.makedirs(cache_dir, exist_ok=True)
+        url_hash = hashlib.sha256(url.strip().encode("utf-8")).hexdigest()
+        output_path = os.path.join(cache_dir, f"youtube_{url_hash}.mp4")
+
+        if os.path.isfile(output_path) and os.path.getsize(output_path) > 0:
+            if progress_callback:
+                progress_callback(f"Using previously downloaded video: {output_path}")
+            return {
+                "title": "Previously downloaded video",
+                "duration": 0,
+                "resolution": "Saved locally",
+                "filepath": output_path,
+                "cached": True,
+            }
 
         def hook(d):
             if cancel_event and cancel_event.is_set():
@@ -41,9 +56,12 @@ class VideoDownloader:
 
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
+            if cancel_event and cancel_event.is_set():
+                raise PipelineCancelledError("Processing stopped by user.")
             return {
                 "title": info.get("title", "YouTube_Video"),
                 "duration": info.get("duration", 0),
                 "resolution": f"{info.get('width', 1920)}x{info.get('height', 1080)}",
-                "filepath": output_path
+                "filepath": output_path,
+                "cached": False,
             }
