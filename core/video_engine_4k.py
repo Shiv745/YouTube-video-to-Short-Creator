@@ -1,8 +1,10 @@
 import os
 import subprocess
+import threading
 import cv2
 import numpy as np
 
+from core.cancellation import PipelineCancelledError
 from core.ffmpeg import find_ffmpeg
 from core.constants import MAX_SHORT_DURATION_SECONDS
 
@@ -57,8 +59,12 @@ class VideoEngine4K:
         ass_subtitle_file: str = None,
         layout_mode: str = "Blurred Cinema Canvas (9:16)",
         resolution_preset: str = "4K UHD (2160x3840)",
-        log_callback=None
+        log_callback=None,
+        cancel_event: threading.Event = None,
     ):
+        if cancel_event and cancel_event.is_set():
+            raise PipelineCancelledError("Processing stopped by user.")
+
         duration = min(
             float(MAX_SHORT_DURATION_SECONDS),
             max(1.0, end_sec - start_sec),
@@ -66,6 +72,8 @@ class VideoEngine4K:
         target_w, target_h = (2160, 3840) if "4K" in resolution_preset else (1080, 1920)
 
         center_ratio = cls.detect_smart_face_center_x(source_video, start_sec, duration)
+        if cancel_event and cancel_event.is_set():
+            raise PipelineCancelledError("Processing stopped by user.")
         if log_callback:
             log_callback(f" -> AI Speaker Face Lock X-Ratio: {center_ratio:.2f} | Target: {target_w}x{target_h}")
 
@@ -127,7 +135,39 @@ class VideoEngine4K:
                 output_file
             ]
 
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            while True:
+                try:
+                    _, stderr = proc.communicate(timeout=0.2)
+                    break
+                except subprocess.TimeoutExpired:
+                    if cancel_event and cancel_event.is_set():
+                        proc.terminate()
+                        try:
+                            proc.communicate(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            proc.kill()
+                            proc.communicate()
+                        if os.path.exists(output_file):
+                            try:
+                                os.remove(output_file)
+                            except OSError as exc:
+                                raise RuntimeError(
+                                    f"Unable to remove incomplete render '{output_file}': {exc}"
+                                ) from exc
+                        raise PipelineCancelledError("Processing stopped by user.")
+        except BaseException:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
+            raise
+
         if proc.returncode != 0:
-            raise RuntimeError(f"FFmpeg Render Error: {proc.stderr[-400:]}")
+            raise RuntimeError(f"FFmpeg Render Error: {stderr[-400:]}")
         return output_file

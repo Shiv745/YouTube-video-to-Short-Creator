@@ -11,6 +11,7 @@ A full-featured Python desktop application inspired by **kixy.ai** and **OpusCli
 4. **Animated Word-Level Captions (`.ass`):** Generates 4K SubStation Alpha subtitles with pop-in scale animations in 3 styles (*Hormozi Gold*, *Cyber Neon*, *Clean Minimal*).
 5. **Broadcast Audio Mastering:** Automatically normalizes audio loudness to `-14 LUFS` (`loudnorm`) at `256 kbps` AAC so your Shorts sound punchy on mobile devices.
 6. **Modern Dark Studio UI:** Built with `CustomTkinter`, featuring a sidebar settings panel, virality score cards, live telemetry logs, and VS Code single-click debugging.
+7. **Pipeline Cancellation:** Stop an active run from the main toolbar; downloads and FFmpeg renders stop promptly, while transcription and Gemini requests stop after the current operation finishes.
 
 ---
 

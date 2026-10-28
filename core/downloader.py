@@ -1,12 +1,19 @@
 import os
+import threading
 from yt_dlp import YoutubeDL
 
+from core.cancellation import PipelineCancelledError
 from core.ffmpeg import find_ffmpeg
 
 
 class VideoDownloader:
     @staticmethod
-    def download_youtube_video(url: str, output_path: str = "temp_source.mp4", progress_callback=None) -> dict:
+    def download_youtube_video(
+        url: str,
+        output_path: str = "temp_source.mp4",
+        progress_callback=None,
+        cancel_event: threading.Event = None,
+    ) -> dict:
         if os.path.exists(output_path):
             try:
                 os.remove(output_path)
@@ -14,6 +21,8 @@ class VideoDownloader:
                 pass
 
         def hook(d):
+            if cancel_event and cancel_event.is_set():
+                raise PipelineCancelledError("Processing stopped by user.")
             if progress_callback and d.get('status') == 'downloading':
                 percent_str = d.get('_percent_str', '').strip()
                 speed_str = d.get('_speed_str', 'N/A').strip()

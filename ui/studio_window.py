@@ -6,6 +6,7 @@ import threading
 from tkinter import filedialog
 import customtkinter as ctk
 
+from core.cancellation import PipelineCancelledError
 from core.downloader import VideoDownloader
 from core.transcriber import AudioTranscriber
 from core.clip_finder import (
@@ -29,6 +30,7 @@ class KixyStudioApp(ctk.CTk):
         self.configure(fg_color="#0B0F19")
 
         self.local_video_path = None
+        self._cancel_event = None
         self.output_dir = os.path.abspath("output_4k_shorts")
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -174,7 +176,14 @@ class KixyStudioApp(ctk.CTk):
             fg_color="#2563EB", hover_color="#1D4ED8", font=("Inter", 14, "bold"),
             command=self.start_pipeline
         )
-        self.start_btn.grid(row=0, column=2, padx=(0, 20), pady=18)
+        self.start_btn.grid(row=0, column=2, padx=(0, 10), pady=18)
+
+        self.stop_btn = ctk.CTkButton(
+            input_card, text="⏹ Stop", width=100, height=44,
+            fg_color="#991B1B", hover_color="#7F1D1D", font=("Inter", 13, "bold"),
+            command=self.stop_pipeline, state="disabled"
+        )
+        self.stop_btn.grid(row=0, column=3, padx=(0, 20), pady=18)
 
         # Progress Bar & Status Indicator
         status_frame = ctk.CTkFrame(self.main_area, fg_color="transparent")
@@ -321,14 +330,34 @@ class KixyStudioApp(ctk.CTk):
             return
 
         self.start_btn.configure(state="disabled", text="⏳ Rendering 4K...")
+        self._cancel_event = threading.Event()
+        self.stop_btn.configure(state="normal", text="⏹ Stop")
         threading.Thread(
             target=self._pipeline_worker,
-            args=(source_input, api_key),
+            args=(source_input, api_key, self._cancel_event),
             daemon=True
         ).start()
 
-    def _pipeline_worker(self, source_input: str, api_key: str):
+    def stop_pipeline(self):
+        if self._cancel_event and not self._cancel_event.is_set():
+            self._cancel_event.set()
+            self.stop_btn.configure(state="disabled", text="Stopping...")
+            self.set_status("Stopping after the current operation...", None)
+            self.log("\n[!] Stop requested. Finishing the current operation safely...")
+
+    @staticmethod
+    def _check_cancelled(cancel_event: threading.Event):
+        if cancel_event.is_set():
+            raise PipelineCancelledError("Processing stopped by user.")
+
+    def _pipeline_worker(
+        self,
+        source_input: str,
+        api_key: str,
+        cancel_event: threading.Event,
+    ):
         try:
+            self._check_cancelled(cancel_event)
             max_clips = int(self.clip_slider.get())
             res_preset = self.res_menu.get()
             layout_mode = self.layout_menu.get()
@@ -346,20 +375,24 @@ class KixyStudioApp(ctk.CTk):
                 info = VideoDownloader.download_youtube_video(
                     source_input,
                     output_path="temp_source.mp4",
-                    progress_callback=lambda msg: self.set_status(f"Step 1/4: {msg}", 0.18)
+                    progress_callback=lambda msg: self.set_status(f"Step 1/4: {msg}", 0.18),
+                    cancel_event=cancel_event,
                 )
                 video_path = info["filepath"]
                 self.log(f" -> Downloaded '{info['title']}' ({info['resolution']})")
 
             # Step 2: Whisper Word-Level Transcription
+            self._check_cancelled(cancel_event)
             self.set_status("Step 2/4: Transcribing audio with word-level timestamps...", 0.35)
             self.log(f"\n[2/4] Running Whisper ({whisper_model}) speech-to-text...")
             transcriber = AudioTranscriber(model_size=whisper_model)
             whisper_result = transcriber.transcribe_with_words(video_path, log_callback=self.log)
+            self._check_cancelled(cancel_event)
             formatted_transcript = AudioTranscriber.format_for_llm(whisper_result)
             self.log(f" -> Extracted {len(whisper_result.get('segments', []))} speech segments.")
 
             # Step 3: Gemini Viral Clip Selection
+            self._check_cancelled(cancel_event)
             self.set_status("Step 3/4: Gemini AI analyzing hooks & virality scores...", 0.60)
             self.log(f"\n[3/4] Finding top {max_clips} viral hooks with Gemini 3.8 Flash...")
             finder = ViralClipFinder(api_key=api_key)
@@ -369,11 +402,13 @@ class KixyStudioApp(ctk.CTk):
                 max_sec=MAX_SHORT_DURATION_SECONDS,
                 log_callback=self.log,
             )
+            self._check_cancelled(cancel_event)
             self.log(f" -> Gemini selected {len(clips)} high-retention clips.")
 
             # Step 4: 4K Smart Render + Animated Subtitles
             self.log(f"\n[4/4] Rendering vertical shorts in {res_preset}...")
             for idx, clip in enumerate(clips, 1):
+                self._check_cancelled(cancel_event)
                 progress_val = 0.60 + (0.38 * (idx / max(1, len(clips))))
                 safe_title = re.sub(r"[^a-zA-Z0-9_-]", "_", clip.get("title", f"clip_{idx}"))
                 self.set_status(f"Step 4/4: Rendering 4K Short #{idx} ({safe_title})...", progress_val)
@@ -391,29 +426,35 @@ class KixyStudioApp(ctk.CTk):
                 )
 
                 out_file = os.path.join(self.output_dir, f"4K_Short_{idx}_{safe_title}.mp4")
-                VideoEngine4K.render_4k_short(
-                    source_video=video_path,
-                    output_file=out_file,
-                    start_sec=start_s,
-                    end_sec=end_s,
-                    ass_subtitle_file=ass_path,
-                    layout_mode=layout_mode,
-                    resolution_preset=res_preset,
-                    log_callback=self.log
-                )
-
-                if os.path.exists(ass_path):
-                    try:
-                        os.remove(ass_path)
-                    except OSError:
-                        pass
+                try:
+                    VideoEngine4K.render_4k_short(
+                        source_video=video_path,
+                        output_file=out_file,
+                        start_sec=start_s,
+                        end_sec=end_s,
+                        ass_subtitle_file=ass_path,
+                        layout_mode=layout_mode,
+                        resolution_preset=res_preset,
+                        log_callback=self.log,
+                        cancel_event=cancel_event,
+                    )
+                finally:
+                    if os.path.exists(ass_path):
+                        try:
+                            os.remove(ass_path)
+                        except OSError as exc:
+                            self.log(f"[!] Could not remove temporary subtitle file '{ass_path}': {exc}")
 
                 self.log(f" -> Saved 4K Short: {out_file}")
                 self.add_clip_card(idx, clip, out_file, res_preset)
 
+            self._check_cancelled(cancel_event)
             self.set_status("✅ All 4K Viral Shorts Rendered & Ready to Upload!", 1.0)
             self.log("\n🎉 Render Complete! Click 'Open 4K Output Folder' to view your videos.")
 
+        except PipelineCancelledError:
+            self.set_status("⏹ Processing stopped.", 0.0)
+            self.log("\n⏹ Processing stopped by user.")
         except InvalidGeminiApiKeyError as e:
             self.set_status("❌ Gemini API key rejected. Update it and retry.", 0.0)
             self.log(f"\n[!] ERROR: {e}")
@@ -424,4 +465,9 @@ class KixyStudioApp(ctk.CTk):
             self.set_status("❌ Error during processing. Check console log.", 0.0)
             self.log(f"\n[!] ERROR: {str(e)}")
         finally:
-            self.after(0, lambda: self.start_btn.configure(state="normal", text="✨ Generate 4K Shorts"))
+            def _finish_pipeline():
+                self.start_btn.configure(state="normal", text="✨ Generate 4K Shorts")
+                self.stop_btn.configure(state="disabled", text="⏹ Stop")
+                self._cancel_event = None
+
+            self.after(0, _finish_pipeline)
