@@ -235,92 +235,6 @@ class ShivStudioApp(ctk.CTk):
         self.audience_timezone_entry.insert(0, "Asia/Kolkata (IST)")
         self.audience_timezone_entry.pack(fill="x", padx=22, pady=(4, 12))
 
-        ctk.CTkLabel(
-            self.settings_panel,
-            text="Optional Background Audio (local file or YouTube/Instagram URL):",
-            font=("Inter", 12),
-            text_color="#D1D5DB",
-            anchor="w",
-            wraplength=250,
-        ).pack(fill="x", padx=22)
-        audio_source_frame = ctk.CTkFrame(self.settings_panel, fg_color="transparent")
-        audio_source_frame.pack(fill="x", padx=22, pady=(4, 6))
-        audio_source_frame.grid_columnconfigure(0, weight=1)
-        self.audio_source_entry = ctk.CTkEntry(
-            audio_source_frame,
-            placeholder_text="Local audio path or supported link...",
-            height=34,
-            fg_color="#1F2937",
-            border_color="#374151",
-        )
-        self.audio_source_entry.grid(row=0, column=0, sticky="ew")
-        self.audio_browse_btn = ctk.CTkButton(
-            audio_source_frame,
-            text="Browse",
-            width=72,
-            height=34,
-            fg_color="#1F2937",
-            hover_color="#374151",
-            command=self.select_audio_file,
-        )
-        self.audio_browse_btn.grid(row=0, column=1, padx=(6, 0))
-        self.source_audio_volume_lbl = ctk.CTkLabel(
-            self.settings_panel,
-            text="Original audio volume: 100%",
-            font=("Inter", 11),
-            text_color="#D1D5DB",
-            anchor="w",
-        )
-        self.source_audio_volume_lbl.pack(fill="x", padx=22, pady=(4, 0))
-        self.source_audio_volume_slider = ctk.CTkSlider(
-            self.settings_panel,
-            from_=0,
-            to=200,
-            number_of_steps=40,
-            command=self._update_audio_volume_labels,
-        )
-        self.source_audio_volume_slider.set(100)
-        self.source_audio_volume_slider.pack(fill="x", padx=22, pady=(2, 6))
-        self.background_audio_volume_lbl = ctk.CTkLabel(
-            self.settings_panel,
-            text="Background audio volume: 25%",
-            font=("Inter", 11),
-            text_color="#D1D5DB",
-            anchor="w",
-        )
-        self.background_audio_volume_lbl.pack(fill="x", padx=22, pady=(2, 0))
-        self.background_audio_volume_slider = ctk.CTkSlider(
-            self.settings_panel,
-            from_=0,
-            to=200,
-            number_of_steps=40,
-            command=self._update_audio_volume_labels,
-        )
-        self.background_audio_volume_slider.set(25)
-        self.background_audio_volume_slider.pack(fill="x", padx=22, pady=(2, 12))
-        audio_preview_frame = ctk.CTkFrame(self.settings_panel, fg_color="transparent")
-        audio_preview_frame.pack(fill="x", padx=22, pady=(0, 12))
-        self.preview_audio_btn = ctk.CTkButton(
-            audio_preview_frame,
-            text="▶ Preview Mix",
-            height=32,
-            fg_color="#2563EB",
-            hover_color="#1D4ED8",
-            command=self.preview_audio_mix,
-        )
-        self.preview_audio_btn.pack(side="left", fill="x", expand=True)
-        self.stop_audio_preview_btn = ctk.CTkButton(
-            audio_preview_frame,
-            text="■ Stop",
-            width=72,
-            height=32,
-            fg_color="#7F1D1D",
-            hover_color="#991B1B",
-            state="disabled",
-            command=self.stop_audio_preview,
-        )
-        self.stop_audio_preview_btn.pack(side="left", padx=(6, 0))
-
         # Framing Mode
         ctk.CTkLabel(self.settings_panel, text="Smart Vertical Framing:", font=("Inter", 12), text_color="#D1D5DB", anchor="w").pack(fill="x", padx=22)
         self.layout_menu = ctk.CTkOptionMenu(
@@ -1022,49 +936,6 @@ class ShivStudioApp(ctk.CTk):
             self.url_entry.insert(0, filepath)
             self.log(f"Selected local source file: {filepath}")
 
-    def select_audio_file(self):
-        filepath = filedialog.askopenfilename(
-            title="Select Background Audio",
-            filetypes=[
-                ("Audio Files", "*.mp3 *.m4a *.aac *.wav *.flac *.ogg *.opus *.wma"),
-                ("All Files", "*.*"),
-            ],
-        )
-        if filepath:
-            self.audio_source_entry.delete(0, "end")
-            self.audio_source_entry.insert(0, filepath)
-            self.log(f"Selected background audio: {filepath}")
-
-    def preview_audio_mix(self):
-        if self._cancel_event or self._audio_studio_cancel_event:
-            self.log("[!] Stop the current video generation before previewing audio.")
-            return
-        if self._audio_preview_cancel_event:
-            self.log("[!] An audio preview is already running.")
-            return
-        source_input = self.url_entry.get().strip()
-        if not source_input:
-            self.log("[!] Select or enter the source video before previewing audio.")
-            return
-
-        audio_source = self.audio_source_entry.get().strip()
-        if (
-            audio_source
-            and not os.path.isfile(audio_source)
-            and not is_supported_audio_url(audio_source)
-        ):
-            self.log(
-                "[!] Choose a local audio file or enter a valid YouTube/Instagram URL."
-            )
-            return
-
-        self._start_audio_preview(
-            source_input,
-            audio_source,
-            self.source_audio_volume_slider.get() / 100,
-            self.background_audio_volume_slider.get() / 100,
-        )
-
     def _start_audio_preview(
         self,
         source_input: str,
@@ -1076,9 +947,7 @@ class ShivStudioApp(ctk.CTk):
         cookie_browser = self._selected_cookie_browser()
         cancel_event = threading.Event()
         self._audio_preview_cancel_event = cancel_event
-        self.preview_audio_btn.configure(state="disabled", text="Preparing preview...")
         self.audio_studio_preview_btn.configure(state="disabled", text="Preparing preview...")
-        self.stop_audio_preview_btn.configure(state="normal")
         self.audio_studio_stop_preview_btn.configure(state="normal")
         threading.Thread(
             target=self._audio_preview_worker,
@@ -1101,7 +970,6 @@ class ShivStudioApp(ctk.CTk):
         process = self._audio_preview_process
         if process and process.poll() is None:
             process.terminate()
-        self.stop_audio_preview_btn.configure(state="disabled", text="Stopping...")
         self.audio_studio_stop_preview_btn.configure(state="disabled", text="Stopping...")
 
     def _audio_preview_worker(
@@ -1231,21 +1099,8 @@ class ShivStudioApp(ctk.CTk):
         if self._closing_requested and not self._cancel_event and not self._audio_studio_cancel_event:
             self.destroy()
             return
-        self.preview_audio_btn.configure(state="normal", text="▶ Preview Mix")
-        self.stop_audio_preview_btn.configure(state="disabled", text="■ Stop")
         self.audio_studio_preview_btn.configure(state="normal", text="▶ Preview Mix")
         self.audio_studio_stop_preview_btn.configure(state="disabled", text="■ Stop Preview")
-
-    def _update_audio_volume_labels(self, _value=None):
-        self.source_audio_volume_lbl.configure(
-            text=f"Original audio volume: {int(self.source_audio_volume_slider.get())}%"
-        )
-        self.background_audio_volume_lbl.configure(
-            text=(
-                "Background audio volume: "
-                f"{int(self.background_audio_volume_slider.get())}%"
-            )
-        )
 
     def _update_audio_studio_volume_labels(self, _value=None):
         self.audio_studio_source_lbl.configure(
@@ -1396,7 +1251,7 @@ class ShivStudioApp(ctk.CTk):
             return
         source_input = self.url_entry.get().strip()
         api_key = self.api_entry.get().strip()
-        audio_source = self.audio_source_entry.get().strip()
+        audio_source = ""
 
         if not source_input:
             self.log("[!] Please paste a YouTube URL or choose a local video file.")
@@ -1423,16 +1278,6 @@ class ShivStudioApp(ctk.CTk):
         if min_duration > max_duration:
             self.log("[!] Minimum clip duration cannot exceed maximum duration.")
             return
-        if (
-            audio_source
-            and not os.path.isfile(audio_source)
-            and not is_supported_audio_url(audio_source)
-        ):
-            self.log(
-                "[!] Choose a local audio file or enter a valid YouTube/Instagram URL."
-            )
-            return
-
         for card in self.clips_scroll.winfo_children():
             card.destroy()
         self.publishing_summary_lbl.configure(
@@ -1452,8 +1297,8 @@ class ShivStudioApp(ctk.CTk):
             "min_duration": min_duration,
             "max_duration": max_duration,
             "audio_source": audio_source,
-            "source_audio_volume": self.source_audio_volume_slider.get() / 100,
-            "background_audio_volume": self.background_audio_volume_slider.get() / 100,
+            "source_audio_volume": 1.0,
+            "background_audio_volume": 0.25,
             "target_audience": self.audience_entry.get().strip(),
             "audience_timezone": self.audience_timezone_entry.get().strip(),
             "resolution": self.res_menu.get(),
