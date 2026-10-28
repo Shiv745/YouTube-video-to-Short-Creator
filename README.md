@@ -7,8 +7,8 @@ A full-featured Python desktop application inspired by **kixy.ai** and **OpusCli
 ## ✨ Key Features
 1. **True 4K UHD Vertical Rendering (2160x3840):** Uses FFmpeg `lanczos` scaling + `unsharp` luma/chroma sharpening + `CRF 18` high-bitrate encoding for ultra-crisp uploads.
 2. **Vertical Framing:** Defaults to **Blurred Cinema Canvas (9:16)**, keeping the complete source frame visible over a blurred background to avoid unwanted zoom/cropping. **Smart Face Crop (Full 9:16)** remains available when you prefer a tightly cropped vertical shot with active-speaker tracking.
-3. **Short Duration Limit:** Requests clips of no more than 29 seconds and enforces the same maximum during rendering.
-4. **Short Source Videos:** Sources shorter than 25 seconds are looped to the 25-second minimum before transcription. If no speech is detected, the app renders the loop directly instead of sending an empty transcript for AI analysis.
+3. **Configurable Clip Duration:** Set minimum and maximum clip lengths in the sidebar from 1 to 180 seconds. Defaults preserve the original 25–29 second range, and rendering enforces the selected maximum.
+4. **Short Source Videos:** Sources shorter than the selected minimum are looped to that minimum before transcription. If no speech is detected, the app renders the loop directly instead of sending an empty transcript for AI analysis.
 5. **Optional Animated Captions (`.ass`):** Choose whether to burn word-level captions into the video with the sidebar toggle. When enabled, choose among 3 styles (*Hormozi Gold*, *Cyber Neon*, *Clean Minimal*).
 6. **Broadcast Audio Mastering:** Automatically normalizes audio loudness to `-14 LUFS` (`loudnorm`) at `256 kbps` AAC so your Shorts sound punchy on mobile devices.
 7. **Modern Dark Studio UI:** Built with `CustomTkinter`, featuring a sidebar settings panel, virality score cards, live telemetry logs, and VS Code single-click debugging.

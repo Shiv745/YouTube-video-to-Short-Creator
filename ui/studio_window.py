@@ -20,7 +20,11 @@ from core.clip_finder import (
 from core.subtitles import SubtitleGenerator
 from core.video_engine_4k import VideoEngine4K
 from core.ffmpeg import create_looped_video, get_video_duration
-from core.constants import MAX_SHORT_DURATION_SECONDS, MIN_SHORT_DURATION_SECONDS
+from core.constants import (
+    MAX_ALLOWED_SHORT_DURATION_SECONDS,
+    MAX_SHORT_DURATION_SECONDS,
+    MIN_SHORT_DURATION_SECONDS,
+)
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -51,9 +55,17 @@ class ShivStudioApp(ctk.CTk):
         self.sidebar = ctk.CTkFrame(self, width=300, corner_radius=0, fg_color="#111827")
         self.sidebar.grid(row=0, column=0, sticky="nsew")
         self.sidebar.grid_propagate(False)
+        self.settings_panel = ctk.CTkScrollableFrame(
+            self.sidebar,
+            fg_color="transparent",
+            corner_radius=0,
+            scrollbar_button_color="#374151",
+            scrollbar_button_hover_color="#4B5563",
+        )
+        self.settings_panel.pack(fill="both", expand=True)
 
         # Brand Logo
-        brand_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        brand_frame = ctk.CTkFrame(self.settings_panel, fg_color="transparent")
         brand_frame.pack(fill="x", padx=22, pady=(24, 16))
 
         logo_badge = ctk.CTkLabel(
@@ -68,35 +80,35 @@ class ShivStudioApp(ctk.CTk):
         title_lbl.pack(side="left", padx=8)
 
         badge_unlimited = ctk.CTkLabel(
-            self.sidebar, text="⚡ UNLIMITED LOCAL 4K ENGINE",
+            self.settings_panel, text="⚡ UNLIMITED LOCAL 4K ENGINE",
             font=("Inter", 11, "bold"), fg_color="#1E293B", text_color="#38BDF8", corner_radius=12, height=28
         )
         badge_unlimited.pack(fill="x", padx=22, pady=(0, 20))
 
         # AI & Render Settings Section
         settings_lbl = ctk.CTkLabel(
-            self.sidebar, text="4K STUDIO RENDER SETTINGS",
+            self.settings_panel, text="4K STUDIO RENDER SETTINGS",
             font=("Inter", 11, "bold"), text_color="#9CA3AF", anchor="w"
         )
         settings_lbl.pack(fill="x", padx=22, pady=(5, 8))
 
         # Gemini API Key
-        ctk.CTkLabel(self.sidebar, text="Gemini API Key:", font=("Inter", 12), text_color="#D1D5DB", anchor="w").pack(fill="x", padx=22)
+        ctk.CTkLabel(self.settings_panel, text="Gemini API Key:", font=("Inter", 12), text_color="#D1D5DB", anchor="w").pack(fill="x", padx=22)
         self.api_entry = ctk.CTkEntry(
-            self.sidebar, placeholder_text="Paste Gemini API Key...",
+            self.settings_panel, placeholder_text="Paste Gemini API Key...",
             show="*", height=36, fg_color="#1F2937", border_color="#374151"
         )
         self.api_entry.pack(fill="x", padx=22, pady=(4, 12))
 
         ctk.CTkLabel(
-            self.sidebar,
+            self.settings_panel,
             text="YouTube Sign-in Browser (if requested):",
             font=("Inter", 12),
             text_color="#D1D5DB",
             anchor="w",
         ).pack(fill="x", padx=22)
         self.youtube_browser_menu = ctk.CTkOptionMenu(
-            self.sidebar,
+            self.settings_panel,
             values=["None (public videos)", "Chrome", "Edge", "Firefox", "Brave"],
             height=36,
             fg_color="#1F2937",
@@ -106,7 +118,7 @@ class ShivStudioApp(ctk.CTk):
         self.youtube_browser_menu.set("None (public videos)")
         self.youtube_browser_menu.pack(fill="x", padx=22, pady=(4, 12))
         ctk.CTkLabel(
-            self.sidebar,
+            self.settings_panel,
             text="Uses your selected browser's local YouTube sign-in.",
             font=("Inter", 10),
             text_color="#9CA3AF",
@@ -115,31 +127,66 @@ class ShivStudioApp(ctk.CTk):
         ).pack(fill="x", padx=22, pady=(0, 8))
 
         # Resolution Selector
-        ctk.CTkLabel(self.sidebar, text="Export Resolution:", font=("Inter", 12), text_color="#D1D5DB", anchor="w").pack(fill="x", padx=22)
+        ctk.CTkLabel(self.settings_panel, text="Export Resolution:", font=("Inter", 12), text_color="#D1D5DB", anchor="w").pack(fill="x", padx=22)
         self.res_menu = ctk.CTkOptionMenu(
-            self.sidebar, values=["4K UHD (2160x3840)", "1080p Full HD (1080x1920)"],
+            self.settings_panel, values=["4K UHD (2160x3840)", "1080p Full HD (1080x1920)"],
             height=36, fg_color="#1F2937", button_color="#2563EB", button_hover_color="#1D4ED8"
         )
         self.res_menu.pack(fill="x", padx=22, pady=(4, 12))
 
+        ctk.CTkLabel(
+            self.settings_panel,
+            text=f"Clip Duration (seconds, 1-{MAX_ALLOWED_SHORT_DURATION_SECONDS}):",
+            font=("Inter", 12),
+            text_color="#D1D5DB",
+            anchor="w",
+        ).pack(fill="x", padx=22)
+        duration_frame = ctk.CTkFrame(self.settings_panel, fg_color="transparent")
+        duration_frame.pack(fill="x", padx=22, pady=(4, 12))
+        duration_frame.grid_columnconfigure((0, 1), weight=1)
+        ctk.CTkLabel(
+            duration_frame, text="Minimum", font=("Inter", 10), text_color="#9CA3AF"
+        ).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(
+            duration_frame, text="Maximum", font=("Inter", 10), text_color="#9CA3AF"
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        self.min_duration_entry = ctk.CTkEntry(
+            duration_frame,
+            width=90,
+            height=34,
+            fg_color="#1F2937",
+            border_color="#374151",
+        )
+        self.min_duration_entry.insert(0, str(MIN_SHORT_DURATION_SECONDS))
+        self.min_duration_entry.grid(row=1, column=0, sticky="ew", pady=(2, 0))
+        self.max_duration_entry = ctk.CTkEntry(
+            duration_frame,
+            width=90,
+            height=34,
+            fg_color="#1F2937",
+            border_color="#374151",
+        )
+        self.max_duration_entry.insert(0, str(MAX_SHORT_DURATION_SECONDS))
+        self.max_duration_entry.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(2, 0))
+
         # Framing Mode
-        ctk.CTkLabel(self.sidebar, text="Smart Vertical Framing:", font=("Inter", 12), text_color="#D1D5DB", anchor="w").pack(fill="x", padx=22)
+        ctk.CTkLabel(self.settings_panel, text="Smart Vertical Framing:", font=("Inter", 12), text_color="#D1D5DB", anchor="w").pack(fill="x", padx=22)
         self.layout_menu = ctk.CTkOptionMenu(
-            self.sidebar, values=["Smart Face Crop (Full 9:16)", "Blurred Cinema Canvas (9:16)"],
+            self.settings_panel, values=["Smart Face Crop (Full 9:16)", "Blurred Cinema Canvas (9:16)"],
             height=36, fg_color="#1F2937", button_color="#2563EB", button_hover_color="#1D4ED8"
         )
         self.layout_menu.set("Blurred Cinema Canvas (9:16)")
         self.layout_menu.pack(fill="x", padx=22, pady=(4, 12))
 
         # Caption Theme
-        ctk.CTkLabel(self.sidebar, text="Dynamic Caption Style:", font=("Inter", 12), text_color="#D1D5DB", anchor="w").pack(fill="x", padx=22)
+        ctk.CTkLabel(self.settings_panel, text="Dynamic Caption Style:", font=("Inter", 12), text_color="#D1D5DB", anchor="w").pack(fill="x", padx=22)
         self.caption_menu = ctk.CTkOptionMenu(
-            self.sidebar, values=["Hormozi Gold", "Cyber Neon", "Clean Minimal"],
+            self.settings_panel, values=["Hormozi Gold", "Cyber Neon", "Clean Minimal"],
             height=36, fg_color="#1F2937", button_color="#2563EB", button_hover_color="#1D4ED8"
         )
         self.caption_menu.pack(fill="x", padx=22, pady=(4, 12))
         self.captions_enabled = ctk.CTkSwitch(
-            self.sidebar,
+            self.settings_panel,
             text="Burn captions into video",
             font=("Inter", 12),
             text_color="#D1D5DB",
@@ -149,17 +196,17 @@ class ShivStudioApp(ctk.CTk):
         self.captions_enabled.pack(fill="x", padx=22, pady=(0, 12))
 
         # Whisper Model Size
-        ctk.CTkLabel(self.sidebar, text="Whisper AI Accuracy:", font=("Inter", 12), text_color="#D1D5DB", anchor="w").pack(fill="x", padx=22)
+        ctk.CTkLabel(self.settings_panel, text="Whisper AI Accuracy:", font=("Inter", 12), text_color="#D1D5DB", anchor="w").pack(fill="x", padx=22)
         self.whisper_menu = ctk.CTkOptionMenu(
-            self.sidebar, values=["base", "small", "medium"],
+            self.settings_panel, values=["base", "small", "medium"],
             height=36, fg_color="#1F2937", button_color="#2563EB", button_hover_color="#1D4ED8"
         )
         self.whisper_menu.pack(fill="x", padx=22, pady=(4, 12))
 
         # Number of Shorts Slider
-        self.clip_count_lbl = ctk.CTkLabel(self.sidebar, text="Max Viral Clips to Generate: 3", font=("Inter", 12), text_color="#D1D5DB", anchor="w")
+        self.clip_count_lbl = ctk.CTkLabel(self.settings_panel, text="Max Viral Clips to Generate: 3", font=("Inter", 12), text_color="#D1D5DB", anchor="w")
         self.clip_count_lbl.pack(fill="x", padx=22, pady=(4, 0))
-        self.clip_slider = ctk.CTkSlider(self.sidebar, from_=1, to=8, number_of_steps=7, command=self._update_slider_label)
+        self.clip_slider = ctk.CTkSlider(self.settings_panel, from_=1, to=8, number_of_steps=7, command=self._update_slider_label)
         self.clip_slider.set(3)
         self.clip_slider.pack(fill="x", padx=22, pady=(6, 18))
 
@@ -529,6 +576,25 @@ class ShivStudioApp(ctk.CTk):
             self.log("[!] Please enter your Gemini API Key in the left sidebar.")
             return
 
+        try:
+            min_duration = int(self.min_duration_entry.get().strip())
+            max_duration = int(self.max_duration_entry.get().strip())
+        except ValueError:
+            self.log("[!] Clip minimum and maximum must be whole numbers of seconds.")
+            return
+        if not (
+            1 <= min_duration <= MAX_ALLOWED_SHORT_DURATION_SECONDS
+            and 1 <= max_duration <= MAX_ALLOWED_SHORT_DURATION_SECONDS
+        ):
+            self.log(
+                f"[!] Clip duration values must be between 1 and "
+                f"{MAX_ALLOWED_SHORT_DURATION_SECONDS} seconds."
+            )
+            return
+        if min_duration > max_duration:
+            self.log("[!] Minimum clip duration cannot exceed maximum duration.")
+            return
+
         self.start_btn.configure(state="disabled", text="⏳ Rendering 4K...")
         self._cancel_event = threading.Event()
         self.stop_btn.configure(state="normal", text="⏹ Stop")
@@ -539,6 +605,8 @@ class ShivStudioApp(ctk.CTk):
         )
         options = {
             "max_clips": int(self.clip_slider.get()),
+            "min_duration": min_duration,
+            "max_duration": max_duration,
             "resolution": self.res_menu.get(),
             "layout": self.layout_menu.get(),
             "caption_style": self.caption_menu.get(),
@@ -590,6 +658,8 @@ class ShivStudioApp(ctk.CTk):
         try:
             self._check_cancelled(cancel_event)
             max_clips = options["max_clips"]
+            min_duration = options["min_duration"]
+            max_duration = options["max_duration"]
             res_preset = options["resolution"]
             layout_mode = options["layout"]
             caption_style = options["caption_style"]
@@ -654,7 +724,7 @@ class ShivStudioApp(ctk.CTk):
                     )
 
             source_duration = get_video_duration(video_path)
-            short_source = source_duration < MIN_SHORT_DURATION_SECONDS
+            short_source = source_duration < min_duration
             if short_source:
                 self._check_cancelled(cancel_event)
                 file_descriptor, looped_source_path = tempfile.mkstemp(
@@ -664,20 +734,20 @@ class ShivStudioApp(ctk.CTk):
                 )
                 os.close(file_descriptor)
                 self.set_pipeline_progress(
-                    "Step 1/4: Looping short source to the 25-second minimum...",
+                    f"Step 1/4: Looping short source to the {min_duration}-second minimum...",
                     overall_progress,
                     f"Source: {source_duration:.1f}s • Creating a "
-                    f"{MIN_SHORT_DURATION_SECONDS}s loop",
+                    f"{min_duration}s loop",
                     indeterminate=True,
                 )
                 self.log(
                     f" -> Source is {source_duration:.1f}s; looping it to "
-                    f"{MIN_SHORT_DURATION_SECONDS}s so it can produce a Short."
+                    f"{min_duration}s so it meets the selected minimum."
                 )
                 create_looped_video(
                     video_path,
                     looped_source_path,
-                    MIN_SHORT_DURATION_SECONDS,
+                    min_duration,
                     cancel_event=cancel_event,
                 )
                 video_path = looped_source_path
@@ -743,7 +813,8 @@ class ShivStudioApp(ctk.CTk):
                         lambda: finder.find_best_clips(
                             formatted_transcript,
                             max_clips=max_clips,
-                            max_sec=MAX_SHORT_DURATION_SECONDS,
+                            min_sec=min_duration,
+                            max_sec=max_duration,
                             log_callback=self.log,
                         ),
                         cancel_event,
@@ -762,7 +833,7 @@ class ShivStudioApp(ctk.CTk):
             if short_source and not clips:
                 clips = [{
                     "start": 0.0,
-                    "end": min(source_duration, MAX_SHORT_DURATION_SECONDS),
+                    "end": min(source_duration, max_duration),
                     "title": "Looped_Short_Video",
                     "virality_score": None,
                     "hook_reason": (
@@ -815,10 +886,12 @@ class ShivStudioApp(ctk.CTk):
                 report_render_progress(0.0)
 
                 start_s = float(clip["start"])
-                end_s = min(
-                    float(clip["end"]),
-                    start_s + MAX_SHORT_DURATION_SECONDS,
-                )
+                start_s = max(0.0, min(start_s, source_duration - min_duration))
+                end_s = min(float(clip["end"]), start_s + max_duration, source_duration)
+                if end_s - start_s < min_duration:
+                    end_s = min(source_duration, start_s + min_duration)
+                    start_s = max(0.0, end_s - min_duration)
+                clip["start"] = start_s
                 clip["end"] = end_s
 
                 ass_path = None
@@ -846,6 +919,7 @@ class ShivStudioApp(ctk.CTk):
                             ass_subtitle_file=ass_path,
                             layout_mode=layout_mode,
                             resolution_preset=res_preset,
+                            max_duration_sec=max_duration,
                             log_callback=self.log,
                             cancel_event=cancel_event,
                             progress_callback=report_render_progress,

@@ -61,6 +61,7 @@ class VideoEngine4K:
         ass_subtitle_file: str = None,
         layout_mode: str = "Blurred Cinema Canvas (9:16)",
         resolution_preset: str = "4K UHD (2160x3840)",
+        max_duration_sec: int = MAX_SHORT_DURATION_SECONDS,
         log_callback=None,
         cancel_event: threading.Event = None,
         progress_callback=None,
@@ -69,7 +70,7 @@ class VideoEngine4K:
             raise PipelineCancelledError("Processing stopped by user.")
 
         duration = min(
-            float(MAX_SHORT_DURATION_SECONDS),
+            float(max_duration_sec),
             max(1.0, end_sec - start_sec),
         )
         target_w, target_h = (2160, 3840) if "4K" in resolution_preset else (1080, 1920)
