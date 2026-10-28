@@ -96,6 +96,7 @@ class KixyStudioApp(ctk.CTk):
             button_color="#2563EB",
             button_hover_color="#1D4ED8",
         )
+        self.youtube_browser_menu.set("Edge")
         self.youtube_browser_menu.pack(fill="x", padx=22, pady=(4, 12))
         ctk.CTkLabel(
             self.sidebar,
