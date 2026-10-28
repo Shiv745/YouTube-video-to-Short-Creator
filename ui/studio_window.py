@@ -4,6 +4,7 @@ import re
 import sys
 import subprocess
 import threading
+import tempfile
 import time
 from tkinter import filedialog
 import customtkinter as ctk
@@ -18,7 +19,8 @@ from core.clip_finder import (
 )
 from core.subtitles import SubtitleGenerator
 from core.video_engine_4k import VideoEngine4K
-from core.constants import MAX_SHORT_DURATION_SECONDS
+from core.ffmpeg import create_looped_video, get_video_duration
+from core.constants import MAX_SHORT_DURATION_SECONDS, MIN_SHORT_DURATION_SECONDS
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -101,7 +103,7 @@ class KixyStudioApp(ctk.CTk):
             button_color="#2563EB",
             button_hover_color="#1D4ED8",
         )
-        self.youtube_browser_menu.set("Edge")
+        self.youtube_browser_menu.set("None (public videos)")
         self.youtube_browser_menu.pack(fill="x", padx=22, pady=(4, 12))
         ctk.CTkLabel(
             self.sidebar,
@@ -136,6 +138,15 @@ class KixyStudioApp(ctk.CTk):
             height=36, fg_color="#1F2937", button_color="#2563EB", button_hover_color="#1D4ED8"
         )
         self.caption_menu.pack(fill="x", padx=22, pady=(4, 12))
+        self.captions_enabled = ctk.CTkSwitch(
+            self.sidebar,
+            text="Burn captions into video",
+            font=("Inter", 12),
+            text_color="#D1D5DB",
+            progress_color="#2563EB",
+        )
+        self.captions_enabled.select()
+        self.captions_enabled.pack(fill="x", padx=22, pady=(0, 12))
 
         # Whisper Model Size
         ctk.CTkLabel(self.sidebar, text="Whisper AI Accuracy:", font=("Inter", 12), text_color="#D1D5DB", anchor="w").pack(fill="x", padx=22)
@@ -466,10 +477,17 @@ class KixyStudioApp(ctk.CTk):
             header = ctk.CTkFrame(card, fg_color="transparent")
             header.pack(fill="x", padx=14, pady=(10, 4))
 
-            score = clip_data.get("virality_score", 95)
+            score = clip_data.get("virality_score")
+            badge_text = (
+                "♻ LOOPED CLIP"
+                if score is None
+                else f"🔥 {score}/100 VIRAL SCORE"
+            )
             badge = ctk.CTkLabel(
-                header, text=f"🔥 {score}/100 VIRAL SCORE",
-                font=("Inter", 11, "bold"), fg_color="#065F46", text_color="#34D399", corner_radius=6, padx=8, pady=2
+                header, text=badge_text,
+                font=("Inter", 11, "bold"), fg_color="#1E3A8A" if score is None else "#065F46",
+                text_color="#93C5FD" if score is None else "#34D399",
+                corner_radius=6, padx=8, pady=2
             )
             badge.pack(side="left")
 
@@ -524,6 +542,7 @@ class KixyStudioApp(ctk.CTk):
             "resolution": self.res_menu.get(),
             "layout": self.layout_menu.get(),
             "caption_style": self.caption_menu.get(),
+            "burn_captions": bool(self.captions_enabled.get()),
             "whisper_model": self.whisper_menu.get(),
         }
         self.progress_bar.set(0.0)
@@ -567,12 +586,14 @@ class KixyStudioApp(ctk.CTk):
     ):
         overall_progress = 0.0
         pipeline_started_at = time.monotonic()
+        looped_source_path = None
         try:
             self._check_cancelled(cancel_event)
             max_clips = options["max_clips"]
             res_preset = options["resolution"]
             layout_mode = options["layout"]
             caption_style = options["caption_style"]
+            burn_captions = options["burn_captions"]
             whisper_model = options["whisper_model"]
 
             # Step 1: Acquire Source Video
@@ -632,6 +653,39 @@ class KixyStudioApp(ctk.CTk):
                         f"\n -> Saved locally: {video_path}"
                     )
 
+            source_duration = get_video_duration(video_path)
+            short_source = source_duration < MIN_SHORT_DURATION_SECONDS
+            if short_source:
+                self._check_cancelled(cancel_event)
+                file_descriptor, looped_source_path = tempfile.mkstemp(
+                    prefix="kixystudio_looped_",
+                    suffix=".mp4",
+                    dir=self.output_dir,
+                )
+                os.close(file_descriptor)
+                self.set_pipeline_progress(
+                    "Step 1/4: Looping short source to the 25-second minimum...",
+                    overall_progress,
+                    f"Source: {source_duration:.1f}s • Creating a "
+                    f"{MIN_SHORT_DURATION_SECONDS}s loop",
+                    indeterminate=True,
+                )
+                self.log(
+                    f" -> Source is {source_duration:.1f}s; looping it to "
+                    f"{MIN_SHORT_DURATION_SECONDS}s so it can produce a Short."
+                )
+                create_looped_video(
+                    video_path,
+                    looped_source_path,
+                    MIN_SHORT_DURATION_SECONDS,
+                    cancel_event=cancel_event,
+                )
+                video_path = looped_source_path
+                source_duration = get_video_duration(video_path)
+                self.log(
+                    f" -> Prepared looped source ({source_duration:.1f}s)."
+                )
+
             # Step 2: Whisper Word-Level Transcription
             self._check_cancelled(cancel_event)
             self.set_pipeline_progress(
@@ -674,25 +728,54 @@ class KixyStudioApp(ctk.CTk):
                 f"{max_clips} clip renders remain • ETA unavailable",
                 indeterminate=True,
             )
-            self.log(f"\n[3/4] Finding top {max_clips} viral hooks with Gemini 3.8 Flash...")
-            finder = ViralClipFinder(api_key=api_key)
-            clips = self._run_with_retries(
-                "Gemini analysis",
-                lambda: finder.find_best_clips(
-                    formatted_transcript,
-                    max_clips=max_clips,
-                    max_sec=MAX_SHORT_DURATION_SECONDS,
-                    log_callback=self.log,
-                ),
-                cancel_event,
-                overall_progress,
-                f"{max_clips} clips remain to render",
-            )
+            if short_source and not formatted_transcript.strip():
+                clips = []
+                self.log(
+                    " -> No speech was detected in the short video. "
+                    "Skipping Gemini clip analysis."
+                )
+            else:
+                self.log(f"\n[3/4] Finding top {max_clips} viral hooks with Gemini 3.8 Flash...")
+                finder = ViralClipFinder(api_key=api_key)
+                try:
+                    clips = self._run_with_retries(
+                        "Gemini analysis",
+                        lambda: finder.find_best_clips(
+                            formatted_transcript,
+                            max_clips=max_clips,
+                            max_sec=MAX_SHORT_DURATION_SECONDS,
+                            log_callback=self.log,
+                        ),
+                        cancel_event,
+                        overall_progress,
+                        f"{max_clips} clips remain to render",
+                    )
+                except GeminiServiceUnavailableError:
+                    if not short_source:
+                        raise
+                    clips = []
+                    self.log(
+                        " -> Gemini is unavailable; using the prepared looped "
+                        "video instead of stopping without output."
+                    )
+
+            if short_source and not clips:
+                clips = [{
+                    "start": 0.0,
+                    "end": min(source_duration, MAX_SHORT_DURATION_SECONDS),
+                    "title": "Looped_Short_Video",
+                    "virality_score": None,
+                    "hook_reason": (
+                        "The short source was looped to meet the minimum duration; "
+                        "no AI-selected segment was available."
+                    ),
+                }]
+                self.log(" -> Rendering the full looped short video directly.")
             self._check_cancelled(cancel_event)
             overall_progress = 0.55
             self.log(f" -> Gemini selected {len(clips)} high-retention clips.")
 
-            # Step 4: 4K Smart Render + Animated Subtitles
+            # Step 4: 4K Smart Render with optional captions
             self.log(f"\n[4/4] Rendering vertical shorts in {res_preset}...")
             render_started_at = time.monotonic()
             for idx, clip in enumerate(clips, 1):
@@ -738,10 +821,18 @@ class KixyStudioApp(ctk.CTk):
                 )
                 clip["end"] = end_s
 
-                ass_path = os.path.join(self.output_dir, f"temp_subs_{idx}.ass")
-                SubtitleGenerator.generate_4k_ass_subtitles(
-                    whisper_result, start_s, end_s, ass_path, style_preset=caption_style
-                )
+                ass_path = None
+                if burn_captions:
+                    ass_path = os.path.join(
+                        self.output_dir, f"temp_subs_{idx}.ass"
+                    )
+                    SubtitleGenerator.generate_4k_ass_subtitles(
+                        whisper_result,
+                        start_s,
+                        end_s,
+                        ass_path,
+                        style_preset=caption_style,
+                    )
 
                 out_file = os.path.join(self.output_dir, f"4K_Short_{idx}_{safe_title}.mp4")
                 try:
@@ -764,7 +855,7 @@ class KixyStudioApp(ctk.CTk):
                         f"{len(clips) - idx + 1} render(s) remain",
                     )
                 finally:
-                    if os.path.exists(ass_path):
+                    if ass_path and os.path.exists(ass_path):
                         try:
                             os.remove(ass_path)
                         except OSError as exc:
@@ -861,6 +952,15 @@ class KixyStudioApp(ctk.CTk):
                     "The saved source video and completed clips were kept."
                 )
         finally:
+            if looped_source_path and os.path.exists(looped_source_path):
+                try:
+                    os.remove(looped_source_path)
+                except OSError as exc:
+                    self.log(
+                        f"[!] Could not remove temporary looped source "
+                        f"'{looped_source_path}': {exc}"
+                    )
+
             def _finish_pipeline():
                 if self._closing_requested:
                     self.destroy()
