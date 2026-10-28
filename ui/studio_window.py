@@ -169,6 +169,39 @@ class ShivStudioApp(ctk.CTk):
         self.max_duration_entry.insert(0, str(MAX_SHORT_DURATION_SECONDS))
         self.max_duration_entry.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(2, 0))
 
+        ctk.CTkLabel(
+            self.settings_panel,
+            text="Target Audience:",
+            font=("Inter", 12),
+            text_color="#D1D5DB",
+            anchor="w",
+        ).pack(fill="x", padx=22)
+        self.audience_entry = ctk.CTkEntry(
+            self.settings_panel,
+            placeholder_text="e.g. India / anime fans",
+            height=34,
+            fg_color="#1F2937",
+            border_color="#374151",
+        )
+        self.audience_entry.insert(0, "India / anime and animation fans")
+        self.audience_entry.pack(fill="x", padx=22, pady=(4, 10))
+        ctk.CTkLabel(
+            self.settings_panel,
+            text="Audience Timezone:",
+            font=("Inter", 12),
+            text_color="#D1D5DB",
+            anchor="w",
+        ).pack(fill="x", padx=22)
+        self.audience_timezone_entry = ctk.CTkEntry(
+            self.settings_panel,
+            placeholder_text="e.g. Asia/Kolkata (IST)",
+            height=34,
+            fg_color="#1F2937",
+            border_color="#374151",
+        )
+        self.audience_timezone_entry.insert(0, "Asia/Kolkata (IST)")
+        self.audience_timezone_entry.pack(fill="x", padx=22, pady=(4, 12))
+
         # Framing Mode
         ctk.CTkLabel(self.settings_panel, text="Smart Vertical Framing:", font=("Inter", 12), text_color="#D1D5DB", anchor="w").pack(fill="x", padx=22)
         self.layout_menu = ctk.CTkOptionMenu(
@@ -307,7 +340,7 @@ class ShivStudioApp(ctk.CTk):
         # Viral Clips Feed
         clips_container = ctk.CTkFrame(split_frame, fg_color="#111827", corner_radius=16, border_width=1, border_color="#1F2937")
         clips_container.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
-        clips_container.grid_rowconfigure(1, weight=1)
+        clips_container.grid_rowconfigure(2, weight=1)
         clips_container.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(
@@ -330,8 +363,21 @@ class ShivStudioApp(ctk.CTk):
             row=0, column=1, padx=(0, 14), pady=(10, 4), sticky="e"
         )
 
+        self.publishing_summary_lbl = ctk.CTkLabel(
+            clips_container,
+            text="AI publishing recommendations will appear here after analysis.",
+            font=("Inter", 11),
+            text_color="#9CA3AF",
+            anchor="w",
+            justify="left",
+            wraplength=560,
+        )
+        self.publishing_summary_lbl.grid(
+            row=1, column=0, columnspan=2, padx=18, pady=(0, 8), sticky="ew"
+        )
+
         self.clips_scroll = ctk.CTkScrollableFrame(clips_container, fg_color="transparent")
-        self.clips_scroll.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 12))
+        self.clips_scroll.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=10, pady=(0, 12))
         self.clips_scroll.grid_columnconfigure(0, weight=1)
 
         # Live Console Log
@@ -526,13 +572,19 @@ class ShivStudioApp(ctk.CTk):
             card = ctk.CTkFrame(self.clips_scroll, fg_color="#1F2937", corner_radius=12, border_width=1, border_color="#374151")
             card.pack(fill="x", padx=6, pady=6)
 
+            publishing = clip_data.get("publishing", {})
             header = ctk.CTkFrame(card, fg_color="transparent")
             header.pack(fill="x", padx=14, pady=(10, 4))
 
             score = clip_data.get("virality_score")
+            rank = publishing.get("rank")
             badge_text = (
-                "♻ LOOPED CLIP"
+                f"♻ LOOPED CLIP • RANK #{rank}"
+                if score is None and rank
+                else "♻ LOOPED CLIP"
                 if score is None
+                else f"🏆 RANK #{rank} • {score}/100 POTENTIAL"
+                if rank
                 else f"🔥 {score}/100 VIRAL SCORE"
             )
             badge = ctk.CTkLabel(
@@ -568,8 +620,76 @@ class ShivStudioApp(ctk.CTk):
             )
             reason_lbl.pack(fill="x", padx=14, pady=(0, 10))
 
+            if publishing:
+                self._add_publishing_details(card, publishing)
+
         self.after(0, _render_card)
 
+    def _add_publishing_details(self, parent, publishing: dict):
+        details = ctk.CTkFrame(parent, fg_color="#111827", corner_radius=10)
+        details.pack(fill="x", padx=12, pady=(0, 12))
+
+        def add_text(label: str, value: str, *, muted: bool = False):
+            ctk.CTkLabel(
+                details,
+                text=label,
+                font=("Inter", 11, "bold"),
+                text_color="#38BDF8",
+                anchor="w",
+            ).pack(fill="x", padx=10, pady=(8, 0))
+            ctk.CTkLabel(
+                details,
+                text=value,
+                font=("Inter", 11),
+                text_color="#9CA3AF" if muted else "#E5E7EB",
+                anchor="w",
+                justify="left",
+                wraplength=480,
+            ).pack(fill="x", padx=10, pady=(2, 0))
+
+        title_options = publishing.get("title_options", [])
+        if title_options:
+            add_text("TITLE OPTIONS", "\n".join(
+                f"{index}. {title}" for index, title in enumerate(title_options, 1)
+            ))
+        add_text("WHY THIS RANK", publishing.get("why_ranked", ""))
+        add_text("DESCRIPTION", publishing.get("description", ""))
+        tags = publishing.get("tags", [])
+        if tags:
+            add_text("TAGS", " • ".join(tags))
+        add_text("TARGET AUDIENCE", publishing.get("target_audience", ""))
+        add_text(
+            "SUGGESTED TEST UPLOAD WINDOW",
+            f"{publishing.get('upload_window', '')}\n"
+            f"{publishing.get('upload_rationale', '')}\n"
+            "Estimate only — compare with your channel's YouTube Analytics.",
+            muted=True,
+        )
+
+        copy_row = ctk.CTkFrame(details, fg_color="transparent")
+        copy_row.pack(fill="x", padx=10, pady=8)
+        primary_title = title_options[0] if title_options else ""
+        copy_items = [
+            ("Copy title", primary_title),
+            ("Copy description", publishing.get("description", "")),
+            ("Copy tags", " ".join(f"#{tag.lstrip('#').replace(' ', '')}" for tag in tags)),
+        ]
+        for label, value in copy_items:
+            if value:
+                ctk.CTkButton(
+                    copy_row,
+                    text=label,
+                    width=110,
+                    height=28,
+                    fg_color="#1F2937",
+                    hover_color="#374151",
+                    command=lambda text=value: self._copy_to_clipboard(text),
+                ).pack(side="left", padx=(0, 6))
+
+    def _copy_to_clipboard(self, text: str):
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.log("[+] Copied recommendation to clipboard.")
     def start_pipeline(self):
         source_input = self.url_entry.get().strip()
         api_key = self.api_entry.get().strip()
@@ -600,6 +720,12 @@ class ShivStudioApp(ctk.CTk):
             self.log("[!] Minimum clip duration cannot exceed maximum duration.")
             return
 
+        for card in self.clips_scroll.winfo_children():
+            card.destroy()
+        self.publishing_summary_lbl.configure(
+            text="Comparing clips and preparing publishing recommendations...",
+            text_color="#9CA3AF",
+        )
         self.start_btn.configure(state="disabled", text="⏳ Rendering 4K...")
         self._cancel_event = threading.Event()
         self.stop_btn.configure(state="normal", text="⏹ Stop")
@@ -612,6 +738,8 @@ class ShivStudioApp(ctk.CTk):
             "max_clips": int(self.clip_slider.get()),
             "min_duration": min_duration,
             "max_duration": max_duration,
+            "target_audience": self.audience_entry.get().strip(),
+            "audience_timezone": self.audience_timezone_entry.get().strip(),
             "resolution": self.res_menu.get(),
             "layout": self.layout_menu.get(),
             "caption_style": self.caption_menu.get(),
@@ -649,6 +777,115 @@ class ShivStudioApp(ctk.CTk):
             return f"{minutes}m {seconds}s"
         return f"{seconds}s"
 
+    @staticmethod
+    def _apply_publishing_plan(clips: list, plan: dict) -> str:
+        recommendations = plan.get("recommendations")
+        if not isinstance(recommendations, list) or len(recommendations) != len(clips):
+            raise ValueError("Publishing plan must include one recommendation per clip.")
+
+        by_number = {}
+        for item in recommendations:
+            if not isinstance(item, dict):
+                raise ValueError("Publishing plan contains an invalid recommendation.")
+            try:
+                clip_number = int(item["clip_number"])
+                rank = int(item["rank"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError("Publishing plan is missing a clip number or rank.") from error
+            if clip_number in by_number or not 1 <= rank <= len(clips):
+                raise ValueError("Publishing plan contains duplicate clips or invalid ranks.")
+            by_number[clip_number] = item
+
+        if set(by_number) != set(range(1, len(clips) + 1)):
+            raise ValueError("Publishing plan must identify every clip exactly once.")
+        ranks = [int(item["rank"]) for item in by_number.values()]
+        if len(set(ranks)) != len(clips):
+            raise ValueError("Publishing plan ranks must be unique.")
+
+        required_text = (
+            "why_ranked",
+            "description",
+            "target_audience",
+            "upload_window",
+            "upload_rationale",
+        )
+        for clip_number, clip in enumerate(clips, 1):
+            item = by_number[clip_number]
+            titles = item.get("title_options")
+            tags = item.get("tags")
+            if (
+                not isinstance(titles, list)
+                or not titles
+                or not all(isinstance(title, str) and title.strip() for title in titles)
+                or not isinstance(tags, list)
+                or not all(isinstance(tag, str) and tag.strip() for tag in tags)
+                or not all(
+                    isinstance(item.get(field), str) and item[field].strip()
+                    for field in required_text
+                )
+            ):
+                raise ValueError(f"Publishing recommendation for clip {clip_number} is incomplete.")
+            clip["publishing"] = {
+                "rank": int(item["rank"]),
+                "title_options": [title.strip() for title in titles[:3]],
+                "description": item["description"].strip(),
+                "tags": [tag.strip().lstrip("#") for tag in tags[:15]],
+                "why_ranked": item["why_ranked"].strip(),
+                "target_audience": item["target_audience"].strip(),
+                "upload_window": item["upload_window"].strip(),
+                "upload_rationale": item["upload_rationale"].strip(),
+            }
+
+        clips.sort(key=lambda clip: clip["publishing"]["rank"])
+        summary = plan.get("comparison_summary")
+        if not isinstance(summary, str) or not summary.strip():
+            raise ValueError("Publishing plan is missing its comparison summary.")
+        return summary.strip()
+
+    @staticmethod
+    def _add_fallback_publishing_plan(
+        clips: list,
+        audience: str,
+        timezone: str,
+        error: Exception = None,
+    ) -> str:
+        ranked_clips = sorted(
+            enumerate(clips, 1),
+            key=lambda entry: (
+                entry[1].get("virality_score") is None,
+                -(entry[1].get("virality_score") or 0),
+            ),
+        )
+        for rank, (clip_number, clip) in enumerate(ranked_clips, 1):
+            title = re.sub(r"[_\s]+", " ", clip.get("title", f"Short {clip_number}")).strip()
+            score = clip.get("virality_score")
+            reason = clip.get("hook_reason") or "No AI comparison details are available."
+            clip["publishing"] = {
+                "rank": rank,
+                "title_options": [title],
+                "description": reason,
+                "tags": ["Shorts", "YouTube Shorts"],
+                "why_ranked": (
+                    f"Ranked by the existing virality score ({score}/100). {reason}"
+                    if score is not None
+                    else reason
+                ),
+                "target_audience": audience or "Review your channel audience in YouTube Analytics.",
+                "upload_window": (
+                    f"No timing estimate available. Check YouTube Analytics "
+                    f"({timezone or 'your audience timezone'})."
+                ),
+                "upload_rationale": (
+                    "A reliable posting window requires your channel's audience activity data."
+                ),
+            }
+        if error:
+            return (
+                "AI publishing analysis was unavailable; clips are ranked by their "
+                f"existing virality scores. Details: {error}"
+            )
+        return "Ranked by virality score. Add transcript content for AI publishing recommendations."
+
     def _pipeline_worker(
         self,
         source_input: str,
@@ -665,6 +902,8 @@ class ShivStudioApp(ctk.CTk):
             max_clips = options["max_clips"]
             min_duration = options["min_duration"]
             max_duration = options["max_duration"]
+            target_audience = options["target_audience"]
+            audience_timezone = options["audience_timezone"]
             res_preset = options["resolution"]
             layout_mode = options["layout"]
             caption_style = options["caption_style"]
@@ -847,6 +1086,83 @@ class ShivStudioApp(ctk.CTk):
                     ),
                 }]
                 self.log(" -> Rendering the full looped short video directly.")
+
+            if clips:
+                for clip in clips:
+                    clip_start = float(clip["start"])
+                    clip_end = float(clip["end"])
+                    excerpt = [
+                        segment.get("text", "").strip()
+                        for segment in whisper_result.get("segments", [])
+                        if float(segment.get("end", 0)) > clip_start
+                        and float(segment.get("start", 0)) < clip_end
+                        and segment.get("text", "").strip()
+                    ]
+                    clip["transcript_excerpt"] = " ".join(excerpt)
+
+                self.set_pipeline_progress(
+                    "Step 3/4: Comparing clips and preparing publishing recommendations...",
+                    0.50,
+                    "Ranking clips • creating titles, descriptions, tags, audience, "
+                    "and upload-time suggestions",
+                    indeterminate=True,
+                )
+                if formatted_transcript.strip() and any(
+                    clip.get("virality_score") is not None for clip in clips
+                ):
+                    try:
+                        self.log(
+                            "\n[3/4] Comparing clip potential and generating publishing packages..."
+                        )
+                        plan = self._run_with_retries(
+                            "Publishing recommendations",
+                            lambda: finder.create_publishing_plan(
+                                clips,
+                                target_audience,
+                                audience_timezone,
+                                log_callback=self.log,
+                            ),
+                            cancel_event,
+                            overall_progress,
+                            f"{len(clips)} clips remain to render",
+                        )
+                        comparison_summary = self._apply_publishing_plan(clips, plan)
+                        self.log(
+                            f" -> Publishing ranking ready: {comparison_summary}"
+                        )
+                    except PipelineCancelledError:
+                        raise
+                    except Exception as error:
+                        comparison_summary = self._add_fallback_publishing_plan(
+                            clips,
+                            target_audience,
+                            audience_timezone,
+                            error,
+                        )
+                        self.log(
+                            "[!] AI publishing recommendations failed; videos will still "
+                            f"render with score-based rankings. Details: {error}"
+                        )
+                else:
+                    comparison_summary = self._add_fallback_publishing_plan(
+                        clips,
+                        target_audience,
+                        audience_timezone,
+                    )
+                self.after(
+                    0,
+                    lambda summary=comparison_summary: self.publishing_summary_lbl.configure(
+                        text=(
+                            f"🏆 CLIP RANKING & PUBLISHING PLAN\n{summary}\n"
+                            "Scores and upload times are estimates, not view guarantees. "
+                            "Use your YouTube Analytics to validate timing."
+                        ),
+                        text_color="#FACC15",
+                    ),
+                )
+                clips.sort(
+                    key=lambda clip: clip.get("publishing", {}).get("rank", len(clips) + 1)
+                )
             self._check_cancelled(cancel_event)
             overall_progress = 0.55
             self.log(f" -> Gemini selected {len(clips)} high-retention clips.")
