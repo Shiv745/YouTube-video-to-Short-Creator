@@ -29,6 +29,22 @@ def find_ffmpeg() -> str:
     )
 
 
+def find_ffplay() -> str:
+    executable = shutil.which("ffplay")
+    if executable:
+        return executable
+
+    ffmpeg_path = Path(find_ffmpeg())
+    ffplay_path = ffmpeg_path.with_name(f"ffplay{ffmpeg_path.suffix}")
+    if ffplay_path.is_file():
+        return str(ffplay_path)
+
+    raise FileNotFoundError(
+        "FFplay was not found beside FFmpeg. Install a complete FFmpeg build "
+        "to preview audio."
+    )
+
+
 def get_video_duration(video_path: str) -> float:
     ffmpeg_path = Path(find_ffmpeg())
     ffprobe_name = f"ffprobe{ffmpeg_path.suffix}"
@@ -62,6 +78,42 @@ def get_video_duration(video_path: str) -> float:
     if duration <= 0:
         raise RuntimeError(f"Video has an invalid duration: '{video_path}'.")
     return duration
+
+
+def get_audio_stream_index(video_path: str) -> int | None:
+    ffmpeg_path = Path(find_ffmpeg())
+    ffprobe_name = f"ffprobe{ffmpeg_path.suffix}"
+    ffprobe_path = shutil.which("ffprobe") or str(
+        ffmpeg_path.with_name(ffprobe_name)
+    )
+    if not os.path.isfile(ffprobe_path):
+        raise FileNotFoundError(
+            "FFprobe was not found beside FFmpeg; install a complete FFmpeg build."
+        )
+
+    result = subprocess.run(
+        [
+            ffprobe_path,
+            "-v", "error",
+            "-select_streams", "a:0",
+            "-show_entries", "stream=index",
+            "-of", "csv=p=0",
+            video_path,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    stream_index = result.stdout.strip()
+    if not stream_index:
+        return None
+    try:
+        return int(stream_index)
+    except ValueError as error:
+        raise RuntimeError(
+            f"FFprobe returned an invalid audio stream index for '{video_path}'."
+        ) from error
 
 
 def create_looped_video(

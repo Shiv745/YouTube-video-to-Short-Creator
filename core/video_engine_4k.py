@@ -7,7 +7,8 @@ import cv2
 import numpy as np
 
 from core.cancellation import PipelineCancelledError
-from core.ffmpeg import find_ffmpeg
+from core.ffmpeg import find_ffmpeg, get_audio_stream_index
+from core.audio_mixer import build_audio_mix_filter
 from core.constants import MAX_SHORT_DURATION_SECONDS
 
 
@@ -85,6 +86,9 @@ class VideoEngine4K:
         layout_mode: str = "Blurred Cinema Canvas (9:16)",
         resolution_preset: str = "4K UHD (2160x3840)",
         max_duration_sec: int = MAX_SHORT_DURATION_SECONDS,
+        background_audio: str = None,
+        source_audio_volume: float = 1.0,
+        background_audio_volume: float = 0.25,
         log_callback=None,
         cancel_event: threading.Event = None,
         progress_callback=None,
@@ -119,25 +123,7 @@ class VideoEngine4K:
                 f"unsharp=5:5:0.8:3:3:0.4[fg];"
                 f"[bg][fg]overlay=(W-w)/2:(H-h)/2{sub_filter}[outv]"
             )
-            cmd = [
-                find_ffmpeg(), "-y",
-                "-ss", f"{start_sec:.2f}",
-                "-i", source_video,
-                "-t", f"{duration:.2f}",
-                "-filter_complex", vf_complex,
-                "-map", "[outv]",
-                "-map", "0:a?",
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", "18",
-                "-pix_fmt", "yuv420p",
-                "-c:a", "aac",
-                "-b:a", "256k",
-                "-af", "loudnorm=I=-14:TP=-1.0:LRA=11",
-                "-progress", "pipe:1",
-                "-nostats",
-                output_file
-            ]
+            video_filter_args = ["-filter_complex", vf_complex]
         else:
             # Smart Face Crop 9:16 + Lanczos 4K Upscaling + Unsharp Mask + Studio Color Grade
             crop_x_expr = f"max(0,min(iw-ih*9/16,(iw*{center_ratio:.3f})-(ih*9/32)))"
@@ -148,23 +134,66 @@ class VideoEngine4K:
                 f"eq=contrast=1.04:saturation=1.08"
                 f"{sub_filter}"
             )
-            cmd = [
-                find_ffmpeg(), "-y",
-                "-ss", f"{start_sec:.2f}",
-                "-i", source_video,
-                "-t", f"{duration:.2f}",
-                "-vf", vf_chain,
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", "18",
-                "-pix_fmt", "yuv420p",
-                "-c:a", "aac",
-                "-b:a", "256k",
-                "-af", "loudnorm=I=-14:TP=-1.0:LRA=11",
-                "-progress", "pipe:1",
-                "-nostats",
-                output_file
-            ]
+            video_filter_args = ["-vf", vf_chain]
+
+        audio_stream_index = get_audio_stream_index(source_video)
+        source_audio_volume = min(2.0, max(0.0, source_audio_volume))
+        background_audio_volume = min(2.0, max(0.0, background_audio_volume))
+        cmd = [
+            find_ffmpeg(), "-y",
+            "-ss", f"{start_sec:.2f}",
+            "-i", source_video,
+        ]
+        if background_audio:
+            cmd.extend(["-stream_loop", "-1", "-i", background_audio])
+            if audio_stream_index is None:
+                cmd.extend([
+                    "-f", "lavfi",
+                    "-t", f"{duration:.2f}",
+                    "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                ])
+                original_audio_input = 2
+            else:
+                original_audio_input = 0
+            audio_filter = build_audio_mix_filter(
+                original_audio_input,
+                1,
+                duration,
+                source_audio_volume,
+                background_audio_volume,
+            )
+            if video_filter_args[0] == "-filter_complex":
+                video_filter_args[1] = f"{video_filter_args[1]};{audio_filter}"
+            else:
+                video_filter_args = [
+                    "-filter_complex",
+                    f"[0:v]{video_filter_args[1]}[outv];{audio_filter}",
+                ]
+            audio_map = ["-map", "[aout]"]
+        else:
+            audio_filter = (
+                "loudnorm=I=-14:TP=-1.0:LRA=11,"
+                f"volume={source_audio_volume:.3f}"
+            )
+            audio_map = ["-map", "0:a?", "-af", audio_filter]
+
+        cmd.extend([
+            "-t", f"{duration:.2f}",
+            *video_filter_args,
+            "-map", "[outv]" if video_filter_args[0] == "-filter_complex" else "0:v",
+            *audio_map,
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "18",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "256k",
+        ])
+        cmd.extend([
+            "-progress", "pipe:1",
+            "-nostats",
+            output_file,
+        ])
 
         proc = subprocess.Popen(
             cmd,
