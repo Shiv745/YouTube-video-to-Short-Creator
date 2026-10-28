@@ -442,6 +442,11 @@ class ShivStudioApp(ctk.CTk):
             "timeout",
             "temporarily unavailable",
             "temporary failure",
+            "winerror 10051",
+            "unreachable network",
+            "socket operation was attempted",
+            "connecterror",
+            "networkerror",
             "connection reset",
             "connection aborted",
             "connection refused",
@@ -987,7 +992,24 @@ class ShivStudioApp(ctk.CTk):
         except Exception as e:
             error_text = str(e)
             lowered_error = error_text.lower()
-            if "ffmpeg render failed with exit code" in lowered_error:
+            if (
+                "winerror 10051" in lowered_error
+                or "unreachable network" in lowered_error
+                or "socket operation was attempted" in lowered_error
+            ):
+                self.set_pipeline_progress(
+                    "❌ Network route to the service is unavailable.",
+                    overall_progress,
+                    "Check your internet connection, VPN, proxy, or firewall, "
+                    "then retry. Completed work is preserved.",
+                )
+                self.log(
+                    f"\n[!] ERROR: {type(e).__name__}: {error_text}\n"
+                    "[!] Windows could not route the connection. Check that the "
+                    "internet is reachable and that VPN, proxy, or firewall settings "
+                    "allow access to the requested service."
+                )
+            elif "ffmpeg render failed with exit code" in lowered_error:
                 self.set_pipeline_progress(
                     "❌ FFmpeg could not render the clip.",
                     overall_progress,
@@ -1027,10 +1049,10 @@ class ShivStudioApp(ctk.CTk):
                 )
             else:
                 self.set_pipeline_progress(
-                    f"❌ Processing stopped after automatic recovery attempts: {error_text[:100]}",
+                    f"❌ Processing stopped: {error_text[:100]}",
                     overall_progress,
                     f"Stopped at about {overall_progress:.0%} • "
-                    "completed clips are saved • see telemetry for recovery details",
+                    "completed clips are saved • see telemetry for any retry details",
                 )
                 self.log(
                     f"\n[!] ERROR: {type(e).__name__}: {error_text}\n"
