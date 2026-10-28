@@ -19,12 +19,6 @@ from core.clip_finder import (
 from core.subtitles import SubtitleGenerator
 from core.video_engine_4k import VideoEngine4K
 from core.constants import MAX_SHORT_DURATION_SECONDS
-from core.session_store import (
-    SessionStorageError,
-    clear_session,
-    load_session,
-    save_session,
-)
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -45,7 +39,6 @@ class KixyStudioApp(ctk.CTk):
         os.makedirs(self.output_dir, exist_ok=True)
 
         self._build_layout()
-        self._restore_session()
         self.protocol("WM_DELETE_WINDOW", self._close_app)
 
     def _build_layout(self):
@@ -92,15 +85,6 @@ class KixyStudioApp(ctk.CTk):
             show="*", height=36, fg_color="#1F2937", border_color="#374151"
         )
         self.api_entry.pack(fill="x", padx=22, pady=(4, 12))
-        self.saved_session_lbl = ctk.CTkLabel(
-            self.sidebar,
-            text="Link and API key are saved securely for up to 48 hours when you start processing.",
-            font=("Inter", 10),
-            text_color="#9CA3AF",
-            anchor="w",
-            wraplength=250,
-        )
-        self.saved_session_lbl.pack(fill="x", padx=22, pady=(0, 10))
 
         ctk.CTkLabel(
             self.sidebar,
@@ -310,54 +294,7 @@ class KixyStudioApp(ctk.CTk):
         self.log("KixyStudio 4K Engine Initialized.")
         self.log(f"Output Directory: {self.output_dir}")
 
-    def _restore_session(self):
-        try:
-            session = load_session()
-        except SessionStorageError as error:
-            self.log(f"[!] Saved session could not be restored: {error}")
-            self.saved_session_lbl.configure(
-                text="Saved session unavailable. Re-enter your link and API key."
-            )
-            return
-
-        if not session:
-            return
-
-        self.url_entry.insert(0, session["url"])
-        self.api_entry.insert(0, session["api_key"])
-        expires_at = session["expires_at"].astimezone().strftime("%b %d, %I:%M %p")
-        self.saved_session_lbl.configure(
-            text=f"Link and API key restored securely • expires {expires_at}."
-        )
-        self.log(f"Restored saved link and protected API key (expires {expires_at}).")
-
-    def _save_session(self):
-        url = self.url_entry.get().strip()
-        api_key = self.api_entry.get().strip()
-        if not url or not api_key:
-            try:
-                clear_session()
-            except SessionStorageError as error:
-                self.log(f"[!] Saved session could not be cleared: {error}")
-            return True
-
-        try:
-            expires_at = save_session(url, api_key)
-        except SessionStorageError as error:
-            self.saved_session_lbl.configure(
-                text="Could not securely save the link and API key."
-            )
-            self.log(f"[!] Session was not saved: {error}")
-            return False
-
-        expires_local = expires_at.astimezone().strftime("%b %d, %I:%M %p")
-        self.saved_session_lbl.configure(
-            text=f"Link saved • API key protected by Windows • expires {expires_local}."
-        )
-        return True
-
     def _close_app(self):
-        self._save_session()
         if self._cancel_event:
             self._closing_requested = True
             self._cancel_event.set()
@@ -574,7 +511,6 @@ class KixyStudioApp(ctk.CTk):
             self.log("[!] Please enter your Gemini API Key in the left sidebar.")
             return
 
-        self._save_session()
         self.start_btn.configure(state="disabled", text="⏳ Rendering 4K...")
         self._cancel_event = threading.Event()
         self.stop_btn.configure(state="normal", text="⏹ Stop")
