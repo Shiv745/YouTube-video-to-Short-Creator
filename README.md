@@ -12,10 +12,12 @@ A full-featured Python desktop application inspired by **kixy.ai** and **OpusCli
 5. **Broadcast Audio Mastering:** Automatically normalizes audio loudness to `-14 LUFS` (`loudnorm`) at `256 kbps` AAC so your Shorts sound punchy on mobile devices.
 6. **Modern Dark Studio UI:** Built with `CustomTkinter`, featuring a sidebar settings panel, virality score cards, live telemetry logs, and VS Code single-click debugging.
 7. **Pipeline Cancellation:** Stop an active run from the main toolbar; downloads and FFmpeg renders stop promptly, while transcription and Gemini requests stop after the current operation finishes.
-8. **Persistent Source Downloads:** Completed YouTube downloads are saved in `downloaded_videos/` and reused on later runs for the same link, including after processing errors or app restarts.
+8. **Persistent Source Downloads:** Completed YouTube downloads are saved in `downloaded_videos/` and reused on later runs for the same video, even when tracking query parameters or URL formats differ.
 9. **YouTube Sign-In:** If YouTube requires verification, choose the browser where you are signed in from the sidebar. The app reads that browser's cookies locally through yt-dlp; public videos do not require this setting.
 10. **Progress and Recovery:** Shows download/render percentages, completed and remaining clips, and time estimates where measurable. Transcription and AI analysis show an activity indicator because those libraries do not expose reliable progress. Temporary errors retry automatically with bounded attempts; Gemini uses its own retry policy. Sign-in, invalid credentials, and other non-retryable errors remain visible in telemetry.
 11. **48-Hour Session Restore:** The last link and Gemini API key are restored for up to 48 hours. On Windows, the key is protected with the current Windows user's DPAPI and is never written to the session file in plaintext.
+
+If yt-dlp reports that it cannot copy a browser cookie database, fully close that browser (including background processes) and retry, or select a different browser where you are signed in. The app does not retry this local browser-lock error because retrying cannot unlock the database.
 
 ---
 

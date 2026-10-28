@@ -1,10 +1,30 @@
 import hashlib
 import os
 import threading
+from urllib.parse import parse_qs, urlparse
+
 from yt_dlp import YoutubeDL
 
 from core.cancellation import PipelineCancelledError
 from core.ffmpeg import find_ffmpeg
+
+
+def _cache_key(url: str) -> str:
+    parsed = urlparse(url.strip())
+    host = (parsed.hostname or "").lower()
+    video_id = ""
+
+    if host == "youtu.be" or host.endswith(".youtu.be"):
+        video_id = parsed.path.strip("/").split("/")[0]
+    elif host == "youtube.com" or host.endswith(".youtube.com"):
+        video_id = (parse_qs(parsed.query).get("v") or [""])[0]
+        if not video_id:
+            path_parts = parsed.path.strip("/").split("/")
+            if len(path_parts) > 1 and path_parts[0] in {"shorts", "embed", "live"}:
+                video_id = path_parts[1]
+
+    identity = f"youtube:{video_id}" if video_id else url.strip()
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
 
 class VideoDownloader:
@@ -22,20 +42,29 @@ class VideoDownloader:
             os.path.join(os.path.dirname(__file__), "..", "downloaded_videos")
         )
         os.makedirs(cache_dir, exist_ok=True)
-        url_hash = hashlib.sha256(url.strip().encode("utf-8")).hexdigest()
+        url_hash = _cache_key(url)
         output_path = os.path.join(cache_dir, f"youtube_{url_hash}.mp4")
+        legacy_hash = hashlib.sha256(url.strip().encode("utf-8")).hexdigest()
+        legacy_path = os.path.join(cache_dir, f"youtube_{legacy_hash}.mp4")
 
-        if os.path.isfile(output_path) and os.path.getsize(output_path) > 0:
+        cached_path = next(
+            (
+                path for path in (output_path, legacy_path)
+                if os.path.isfile(path) and os.path.getsize(path) > 0
+            ),
+            None,
+        )
+        if cached_path:
             if progress_callback:
                 progress_callback(
-                    f"Using previously downloaded video: {output_path}",
+                    f"Using previously downloaded video: {cached_path}",
                     1.0,
                 )
             return {
                 "title": "Previously downloaded video",
                 "duration": 0,
                 "resolution": "Saved locally",
-                "filepath": output_path,
+                "filepath": cached_path,
                 "cached": True,
             }
 

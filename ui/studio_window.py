@@ -412,6 +412,10 @@ class KixyStudioApp(ctk.CTk):
         message = str(error).lower()
         permanent_markers = (
             "sign in to confirm",
+            "could not copy",
+            "cookie database",
+            "database is locked",
+            "database locked",
             "api_key_invalid",
             "invalid api key",
             "permission denied",
@@ -866,7 +870,23 @@ class KixyStudioApp(ctk.CTk):
             self.log(f"\n[!] ERROR: {e}")
         except Exception as e:
             error_text = str(e)
-            if "sign in to confirm" in error_text.lower():
+            lowered_error = error_text.lower()
+            if "could not copy" in lowered_error and "cookie" in lowered_error:
+                self.set_pipeline_progress(
+                    "❌ The selected browser's cookie database is locked.",
+                    overall_progress,
+                    "Close every window of that browser completely, then retry. "
+                    "Or select Edge if you are signed in there.",
+                )
+                self.log(
+                    f"\n[!] ERROR: {error_text}\n"
+                    "[!] yt-dlp cannot copy the selected browser's cookie database "
+                    "while the browser is using it. Close all browser windows "
+                    "(including background processes), or select another browser "
+                    "where you are signed in, then retry. This is a local lock error; "
+                    "automatic retries cannot unlock it."
+                )
+            elif "sign in to confirm" in lowered_error:
                 self.set_pipeline_progress(
                     "❌ YouTube requires sign-in. Select your browser and retry.",
                     overall_progress,
