@@ -19,7 +19,7 @@ class AudioTranscriber:
         self.load(log_callback)
         if log_callback:
             log_callback("Transcribing audio with word-level timestamps for animated captions...")
-        result = self.model.transcribe(video_path, word_timestamps=True, verbose=False)
+        result = self.model.transcribe(video_path, word_timestamps=True, verbose=None)
         return result
 
     @staticmethod
