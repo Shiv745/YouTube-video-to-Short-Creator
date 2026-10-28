@@ -13,6 +13,29 @@ from core.constants import MAX_SHORT_DURATION_SECONDS
 
 class VideoEngine4K:
     @staticmethod
+    def _format_render_error(stderr_lines, return_code: int) -> str:
+        lines = list(stderr_lines)
+        error_markers = (
+            "error",
+            "failed",
+            "invalid",
+            "unable",
+            "could not",
+            "cannot",
+            "no such",
+            "not found",
+            "resource temporarily unavailable",
+        )
+        diagnostic_lines = [
+            line for line in lines
+            if any(marker in line.lower() for marker in error_markers)
+        ]
+        details = "\n".join(diagnostic_lines[-20:] or lines[-80:])
+        if not details:
+            details = "FFmpeg did not provide diagnostic output."
+        return f"FFmpeg render failed with exit code {return_code}:\n{details[-8000:]}"
+
+    @staticmethod
     def detect_smart_face_center_x(video_path: str, start_sec: float, duration_sec: float) -> float:
         """
         Samples frames across the clip using OpenCV Haar Cascade to locate the active speaker's
@@ -151,7 +174,7 @@ class VideoEngine4K:
             encoding="utf-8",
             errors="replace",
         )
-        stderr_lines = deque(maxlen=40)
+        stderr_lines = deque(maxlen=200)
 
         def read_progress():
             current_time = 0.0
@@ -222,6 +245,14 @@ class VideoEngine4K:
             raise PipelineCancelledError("Processing stopped by user.")
 
         if proc.returncode != 0:
-            stderr = "\n".join(stderr_lines)
-            raise RuntimeError(f"FFmpeg Render Error: {stderr[-400:]}")
+            error = cls._format_render_error(stderr_lines, proc.returncode)
+            if os.path.exists(output_file):
+                try:
+                    os.remove(output_file)
+                except OSError as cleanup_error:
+                    raise RuntimeError(
+                        f"{error}\nCould not remove incomplete render "
+                        f"'{output_file}': {cleanup_error}"
+                    ) from cleanup_error
+            raise RuntimeError(error)
         return output_file

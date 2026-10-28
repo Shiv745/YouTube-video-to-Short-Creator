@@ -987,7 +987,19 @@ class ShivStudioApp(ctk.CTk):
         except Exception as e:
             error_text = str(e)
             lowered_error = error_text.lower()
-            if "could not copy" in lowered_error and "cookie" in lowered_error:
+            if "ffmpeg render failed with exit code" in lowered_error:
+                self.set_pipeline_progress(
+                    "❌ FFmpeg could not render the clip.",
+                    overall_progress,
+                    "Render failed • see telemetry for FFmpeg diagnostics • "
+                    "completed clips remain saved.",
+                )
+                self.log(
+                    f"\n[!] ERROR: {type(e).__name__}: {error_text}\n"
+                    "[!] FFmpeg diagnostics above include the reported error lines. "
+                    "The incomplete output file was removed."
+                )
+            elif "could not copy" in lowered_error and "cookie" in lowered_error:
                 self.set_pipeline_progress(
                     "❌ The selected browser's cookie database is locked.",
                     overall_progress,
